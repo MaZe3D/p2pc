@@ -225,13 +225,20 @@ impl eframe::App for App {
                                 if let Some(answer_to_message) =
                                     current_chat.get_message_from_id(&answer_to)
                                 {
-                                    ui.add(Label::new(format!("{} ⮪", answer_to_message.get_content())).truncate(true));
+                                    ui.add(
+                                        Label::new(format!(
+                                            "{} ⮪",
+                                            answer_to_message.get_content()
+                                        ))
+                                        .truncate(true),
+                                    );
                                 }
                             });
                         });
                 }
             }
         }
+
         egui::SidePanel::left("chats")
             .min_width(60.)
             .show_animated(ctx, self.show_chats, |ui| {
