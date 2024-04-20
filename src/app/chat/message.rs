@@ -36,8 +36,4 @@ impl Message {
     pub fn get_answer_to(&self) -> Option<&uuid::Uuid> {
         self.answer_to.as_ref()
     }
-
-    pub fn answer_to(&mut self, message_id: uuid::Uuid) {
-        self.answer_to = Some(message_id);
-    }
 }

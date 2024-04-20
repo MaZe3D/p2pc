@@ -5,6 +5,9 @@ pub use message::*;
 mod contact;
 pub use contact::*;
 
+mod contacts;
+pub use contacts::*;
+
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Chat {
     chat_id: Uuid,
@@ -25,16 +28,6 @@ impl Chat {
             name: "New Chat".to_string(),
             participants: participants,
         }
-    }
-
-    pub fn get_participants(&self) -> &Vec<String> {
-        &self.participants
-    }
-
-    pub fn from_chat_window(chat_window: ChatEditWindowContent) -> Self {
-        let mut chat = Self::new_chat(chat_window.participants);
-        chat.name = chat_window.name;
-        chat
     }
 
     pub fn get_chat_messages(&self) -> &Vec<Message> {
@@ -65,13 +58,6 @@ pub struct ChatEditWindowContent {
 }
 
 impl ChatEditWindowContent {
-    pub fn new() -> Self {
-        Self {
-            name: "New Chat".to_string(),
-            participants: Vec::new(),
-        }
-    }
-
     pub fn from_chat(chat: &Chat) -> Self {
         Self {
             name: chat.name.clone(),
