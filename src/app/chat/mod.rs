@@ -14,8 +14,8 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn new_message(&mut self, sender_id: String, message: String) {
-        self.messages.push(Message::new(sender_id, message));
+    pub fn new_message(&mut self, sender_id: String, message: String, answer_to: Option<Uuid>) {
+        self.messages.push(Message::new(sender_id, message, answer_to));
     }
 
     pub fn new_chat(participants: Vec<String>) -> Self {
@@ -43,6 +43,10 @@ impl Chat {
 
     pub fn get_chat_id(&self) -> &Uuid {
         &self.chat_id
+    }
+
+    pub fn get_message_from_id(&self, message_id: &Uuid) -> Option<&Message> {
+        self.messages.iter().find(|message| message.get_message_id() == message_id)
     }
 }
 

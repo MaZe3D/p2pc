@@ -1,16 +1,18 @@
-use egui::{vec2, Align, Label, Layout, RichText, Sense};
-use std::{string, thread::current};
+use egui::{vec2, Align, Button, Label, Layout, RichText, Sense};
+use std::{fmt::format, string, thread::LocalKey};
+use uuid::Uuid;
 
 mod chat;
 use chat::Chat;
 
-use self::chat::{ChatEditWindowContent, Contact};
+use self::chat::{ChatEditWindowContent, Contact, ContactEditWindowContent};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct App {
     current_message: String,
+    current_message_answer_to: Option<Uuid>,
     auto_scroll: bool,
     current_chat_index: Option<usize>,
 
@@ -19,6 +21,7 @@ pub struct App {
     contacts: Vec<chat::Contact>,
 
     drop_chat_messages_from_unkown: bool,
+    theme: Theme,
 
     #[serde(skip)]
     show_chats: bool,
@@ -39,6 +42,14 @@ pub struct App {
     show_contacts: bool,
 }
 
+#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+enum Theme {
+    LATTE,
+    FRAPPE,
+    MACCHIATO,
+    MOCHA,
+}
+
 #[derive(PartialEq)]
 enum EditMode {
     None,
@@ -52,7 +63,9 @@ impl Default for App {
         Self {
             // Example stuff:
             current_chat_index: Option::None,
-            own_public_key: "2".to_owned(),
+            own_public_key: "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAI8bPMUvxS90itiFYHak9ZnqzuhqCr0o
+7UNVByX+EbBrR+JXpIIiUTvEfRQvxWKrLjRnD/ObaTBaV4QrC6wJpp0CAwEAAQ=="
+                .to_owned(),
             auto_scroll: true,
             show_chats: false,
             show_edit_chat: false,
@@ -61,10 +74,12 @@ impl Default for App {
             chats: Vec::new(),
             contacts: Vec::new(),
             current_message: String::new(),
+            current_message_answer_to: None,
             contact_edit_window_content: Default::default(),
             chat_edit_window_content: Default::default(),
             edit_chat_mode: EditMode::None,
             edit_contact_mode: EditMode::None,
+            theme: Theme::MACCHIATO,
         }
     }
 }
@@ -77,11 +92,25 @@ impl App {
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
+
+        cc.egui_ctx.set_zoom_factor(1.5);
+
+        setup_custom_fonts(&cc.egui_ctx);
+
         if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
 
         Default::default()
+    }
+
+    fn update_theme(&mut self, ctx: &egui::Context) {
+        match self.theme {
+            Theme::LATTE => catppuccin_egui::set_theme(&ctx, catppuccin_egui::LATTE),
+            Theme::FRAPPE => catppuccin_egui::set_theme(&ctx, catppuccin_egui::FRAPPE),
+            Theme::MACCHIATO => catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO),
+            Theme::MOCHA => catppuccin_egui::set_theme(&ctx, catppuccin_egui::MOCHA),
+        }
     }
 }
 
@@ -118,94 +147,194 @@ impl eframe::App for App {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    egui::widgets::global_dark_light_mode_switch(ui);
+                    ui.menu_button("🎨", |ui| {
+                        ui.heading("Theme");
+                        ui.selectable_value(&mut self.theme, Theme::LATTE, "Latte");
+                        ui.selectable_value(&mut self.theme, Theme::FRAPPE, "Frappe");
+                        ui.selectable_value(&mut self.theme, Theme::MACCHIATO, "Macchiato");
+                        ui.selectable_value(&mut self.theme, Theme::MOCHA, "Mocha");
+                    });
+                    self.update_theme(ctx);
                 });
             });
         });
 
-        egui::TopBottomPanel::bottom("bottom_panel")
-            .exact_height(30.)
-            .show(ctx, |ui| {});
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("ptpc");
+                ui.separator();
+                if ui
+                    .add(egui::Label::new(&self.own_public_key).truncate(true))
+                    .on_hover_text(format!("Click to copy."))
+                    .clicked()
+                {
+                    if !is_web {
+                        ctx.output_mut(|o| o.copied_text = self.own_public_key.clone());
+                    }
+                };
+            });
+        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.horizontal(|ui| {
-                ui.heading("Chat");
-                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    ui.checkbox(&mut self.auto_scroll, "Autoscroll");
-                });
-            });
-            egui::ScrollArea::vertical()
-                .stick_to_bottom(self.auto_scroll)
-                .show(ui, |ui| {
-                    if let Some(index) = self.current_chat_index {
-                        egui::Grid::new("chat_grid")
-                            .num_columns(1)
-                            .min_col_width(ui.available_width())
-                            .striped(true)
-                            .show(ui, |ui| {
-                                for message in self.chats[index].get_chat_messages() {
-                                    ui.horizontal(|ui| {
-                                        if *message.get_sender() == self.own_public_key {
-                                            ui.with_layout(
-                                                Layout::right_to_left(egui::Align::Max),
-                                                |ui| {
-                                                    let response = ui.add(
-                                                        egui::Label::new(
-                                                            message.get_content().clone(),
-                                                        )
-                                                        .sense(Sense::click()),
-                                                    );
-                                                    response.context_menu(|ui| {
-                                                        if ui.button("↩ Answer").clicked() {
-                                                            ui.close_menu();
-                                                        }
-                                                    })
-                                                },
-                                            );
-                                        } else {
-                                            ui.with_layout(
-                                                Layout::left_to_right(egui::Align::Max),
-                                                |ui| {
-                                                    ui.add(egui::Label::new(
-                                                        egui::RichText::new(format!(
-                                                            "{}:",
-                                                            message.get_sender()
-                                                        ))
-                                                        .italics(),
-                                                    ));
 
-                                                    let response = ui.add(
-                                                        egui::Label::new(
-                                                            message.get_content().clone(),
+            match self.current_chat_index {
+                Some(current_chat_index) => match self.chats.get_mut(current_chat_index) {
+                    Some(current_chat) => {
+                        ui.horizontal(|ui| {
+                            ui.heading(RichText::new("Chat:"));
+                            ui.heading(current_chat.name.clone());
+                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                ui.checkbox(&mut self.auto_scroll, "Autoscroll");
+                            });
+                        });
+                        egui::ScrollArea::vertical()
+                            .stick_to_bottom(self.auto_scroll)
+                            .show(ui, |ui| {
+                                egui::Grid::new("chat_grid")
+                                    .num_columns(1)
+                                    .min_col_width(ui.available_width())
+                                    .striped(true)
+                                    .show(ui, |ui| {
+                                        for message in current_chat.get_chat_messages() {
+                                            let sender = self.contacts.iter().find(|contact| {
+                                                contact.public_key == *message.get_sender()
+                                            });
+                                            let sender_is_user =
+                                                message.get_sender() == &self.own_public_key;
+                                            let layout = if sender_is_user {
+                                                Layout::right_to_left(Align::Max)
+                                            } else {
+                                                Layout::left_to_right(Align::Max)
+                                            };
+
+                                            ui.vertical(|ui| {
+                                                ui.with_layout(layout, |ui| {
+                                                    ui.label(
+                                                        RichText::new(
+                                                            message
+                                                                .recieved_time
+                                                                .format("%Y-%m-%d %H:%M:%S")
+                                                                .to_string(),
                                                         )
-                                                        .sense(Sense::click()),
+                                                        .color(egui::Color32::GRAY)
+                                                        .size(8.),
                                                     );
-                                                    response.context_menu(|ui| {
-                                                        if ui.button("↩ Answer").clicked() {
-                                                            ui.close_menu();
+                                                    if let Some(answer_to_id) = message.get_answer_to() {
+                                                        if let Some(answer_to_message) = current_chat.get_message_from_id(answer_to_id) {
+                                                            ui.add(Label::new(RichText::new(format!("{} ⮪", answer_to_message.get_content()).to_string()).size(10.)));
                                                         }
-                                                    })
-                                                },
-                                            );
+                                                    }
+                                                });
+                                                ui.with_layout(layout, |ui| {
+                                                    match sender {
+                                                        Some(contact) => {
+                                                            ui.add(Label::new(
+                                                                RichText::new(contact.name.clone())
+                                                                    .color(contact.color)
+                                                                    .italics()
+                                                                    .size(10.),
+                                                            ))
+                                                            .on_hover_text(
+                                                                contact.public_key.clone(),
+                                                            );
+                                                        }
+                                                        None => {
+                                                            if !sender_is_user {
+                                                                let sender_label_response = ui
+                                                                    .add(Label::new(
+                                                                        RichText::new(format!(
+                                                                            "{}...",
+                                                                            &message.get_sender()
+                                                                                [..8]
+                                                                        ))
+                                                                        .color(egui::Color32::RED),
+                                                                    ))
+                                                                    .on_hover_text(format!(
+                                                                        "{}",
+                                                                        &message.get_sender()
+                                                                    ));
+
+                                                                sender_label_response.context_menu(
+                                                                    |ui| {
+                                                                        if ui
+                                                                            .button("➕ Add to contacts")
+                                                                            .clicked()
+                                                                        {
+                                                                            ui.close_menu();
+                                                                            self.contact_edit_window_content = ContactEditWindowContent::default();
+                                                                            self.contact_edit_window_content.public_key = message.get_sender().clone();
+                                                                            self.edit_contact_mode = EditMode::New;
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    let message_label_response = ui.add(
+                                                        Label::new(RichText::new(
+                                                            message.get_content().clone(),
+                                                        ))
+                                                        .wrap(true),
+                                                    );
+
+                                                    message_label_response.context_menu(|ui| {
+                                                        if ui.button("⮪ Answer").clicked() {
+                                                            ui.close_menu();
+                                                            self.current_message_answer_to = Some(message.get_message_id().clone());
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                            ui.end_row();
                                         }
                                     });
-                                    ui.end_row();
-                                }
                             });
-                    }
-                });
 
-            ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                ui.horizontal(|ui| {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Send").clicked() {}
-                        egui::TextEdit::singleline(&mut self.current_message)
-                            .min_size(ui.available_size())
-                            .show(ui);
-                    });
-                });
-            });
+                        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                            ui.horizontal(|ui| {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.add_enabled(!self.current_message.trim().is_empty(), Button::new("Send ➡")).clicked() {
+                                        current_chat.new_message(
+                                            //"0x1234".to_string(),
+                                            self.own_public_key.clone(),
+                                            self.current_message.trim().to_string(),
+                                            self.current_message_answer_to,
+                                        );
+                                        self.current_message.clear();
+                                        self.current_message_answer_to = None;
+                                    }
+                                    egui::TextEdit::singleline(&mut self.current_message)
+                                    .min_size(ui.available_size())
+                                    .show(ui);
+                                });
+
+                            });
+                            if let Some(answer_to) = self.current_message_answer_to {
+                                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                                    if ui.button("❌").clicked() {
+                                        self.current_message_answer_to = None;
+                                    }
+                                    if let Some(answer_to_message) = current_chat.get_message_from_id(&answer_to) {
+                                        ui.label(format!("{} ⮪", answer_to_message.get_content()));
+                                    }
+                                });
+                        }
+                        ui.separator();
+                        });
+                    }
+                    None => {
+                        self.current_chat_index = None;
+                    }
+                },
+                None => {
+                    ui.heading(
+                        RichText::new("No chat selected")
+                            .italics()
+                            .color(egui::Color32::RED),
+                    );
+                }
+            }
         });
 
         egui::SidePanel::left("chats")
@@ -228,16 +357,15 @@ impl eframe::App for App {
                         .show(ui, |ui| {
                             self.chats.iter().enumerate().for_each(|(index, chat)| {
                                 ui.horizontal(|ui| {
-                                    if self.chats.len() > 0 {
-                                        if ui
-                                            .add(egui::SelectableLabel::new(
-                                                self.current_chat_index == Some(index),
-                                                chat.name.clone(),
-                                            ))
-                                            .clicked()
-                                        {
-                                            self.current_chat_index = Some(index);
-                                        }
+                                    if ui
+                                        .add(egui::SelectableLabel::new(
+                                            self.current_chat_index == Some(index),
+                                            chat.name.clone(),
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.current_chat_index = Some(index);
+                                        self.show_chats = false;
                                     }
                                 });
                                 if (ui.button("✏").clicked()) {
@@ -321,7 +449,7 @@ impl eframe::App for App {
                         EditMode::New => 2,
                         _ => 1,
                     })
-                    .max_col_width(0.)
+                    .min_col_width(0.)
                     .striped(true)
                     .show(ui, |ui| {
                         let mut chat_edit_mode_participant_edit_mode: EditMode = EditMode::None;
@@ -359,7 +487,14 @@ impl eframe::App for App {
                                 }
                                 ui.end_row();
                             });
+                        match chat_edit_mode_participant_edit_mode {
+                            EditMode::Delete(idx) => {
+                                self.chat_edit_window_content.participants.remove(idx);
+                            }
+                            _ => {}
+                        }
                     });
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
@@ -531,4 +666,38 @@ impl eframe::App for App {
             },
         );
     }
+}
+
+fn setup_custom_fonts(ctx: &egui::Context) {
+    // Start with the default fonts (we will be adding to them rather than replacing them).
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Install my own font (maybe supporting non-latin characters).
+    // .ttf and .otf files supported.
+    fonts.font_data.insert(
+        "sharetech".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../assets/ShareTech.ttf")),
+    );
+
+    fonts.font_data.insert(
+        "sharetechmono".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../assets/ShareTechMono.ttf")),
+    );
+
+    // Put my font first (highest priority) for proportional text:
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "sharetech".to_owned());
+
+    // Put my font as last fallback for monospace:
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .push("sharetechmono".to_owned());
+
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
 }
