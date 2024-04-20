@@ -1,6 +1,5 @@
-use egui::{vec2, Align, Grid, Label, Layout, RichText, Sense};
-use rand::seq::index;
-use std::string;
+use egui::{vec2, Align, Label, Layout, RichText, Sense};
+use std::{string, thread::current};
 
 mod chat;
 use chat::Chat;
@@ -18,6 +17,8 @@ pub struct App {
     own_public_key: string::String,
     chats: Vec<Chat>,
     contacts: Vec<chat::Contact>,
+
+    drop_chat_messages_from_unkown: bool,
 
     #[serde(skip)]
     show_chats: bool,
@@ -56,6 +57,7 @@ impl Default for App {
             show_chats: false,
             show_edit_chat: false,
             show_contacts: false,
+            drop_chat_messages_from_unkown: false,
             chats: Vec::new(),
             contacts: Vec::new(),
             current_message: String::new(),
@@ -99,16 +101,6 @@ impl eframe::App for App {
             // The top panel is often a good place for a menu bar:
 
             egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Quit").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
-
                 if ui.selectable_label(self.show_chats, "Chats").clicked() {
                     self.show_chats = !self.show_chats;
                     if !self.show_chats {
@@ -215,43 +207,69 @@ impl eframe::App for App {
                 });
             });
         });
-        egui::SidePanel::left("chats").show_animated(ctx, self.show_chats, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Chats");
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    if ui.button("➕").clicked() {
-                        self.chat_edit_window_content = ChatEditWindowContent::default();
-                        self.edit_chat_mode = EditMode::New;
-                    }
-                });
-            });
-            egui::Grid::new("chats_grid")
-                .num_columns(3)
-                .striped(true)
-                .min_col_width(0.)
-                .show(ui, |ui| {
-                    self.chats.iter().enumerate().for_each(|(index, chat)| {
-                        ui.horizontal(|ui| {
-                            ui.add(Label::new(chat.name.clone()));
-                        });
-                        if (ui.button("✏").clicked()) {
-                            self.edit_chat_mode = EditMode::Edit(index);
-                            self.chat_edit_window_content = ChatEditWindowContent::from_chat(chat);
+
+        egui::SidePanel::left("chats")
+            .min_width(50.)
+            .show_animated(ctx, self.show_chats, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Chats");
+                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                        if ui.button("➕").clicked() {
+                            self.chat_edit_window_content = ChatEditWindowContent::default();
+                            self.edit_chat_mode = EditMode::New;
                         }
-                        if (ui.button("🗑").clicked()) {
-                            self.edit_chat_mode = EditMode::Delete(index);
-                        }
-                        ui.end_row();
                     });
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Grid::new("chats_grid")
+                        .num_columns(3)
+                        .striped(true)
+                        .min_col_width(0.)
+                        .show(ui, |ui| {
+                            self.chats.iter().enumerate().for_each(|(index, chat)| {
+                                ui.horizontal(|ui| {
+                                    if self.chats.len() > 0 {
+                                        if ui
+                                            .add(egui::SelectableLabel::new(
+                                                self.current_chat_index == Some(index),
+                                                chat.name.clone(),
+                                            ))
+                                            .clicked()
+                                        {
+                                            self.current_chat_index = Some(index);
+                                        }
+                                    }
+                                });
+                                if (ui.button("✏").clicked()) {
+                                    self.edit_chat_mode = EditMode::Edit(index);
+                                    self.chat_edit_window_content =
+                                        ChatEditWindowContent::from_chat(chat);
+                                }
+                                if (ui.button("🗑").clicked()) {
+                                    self.edit_chat_mode = EditMode::Delete(index);
+                                }
+                                ui.end_row();
+                            });
+                        });
                     match self.edit_chat_mode {
-                        EditMode::Delete(idx) => {
-                            self.chats.remove(idx);
-                            self.edit_chat_mode = EditMode::None;
-                        }
+                        EditMode::Delete(idx) => match self.current_chat_index {
+                            Some(selected_chat_index) => {
+                                let selected_chat_id =
+                                    self.chats[selected_chat_index].get_chat_id().clone();
+                                self.chats.remove(idx);
+
+                                self.current_chat_index = self
+                                    .chats
+                                    .iter()
+                                    .position(|chat| *chat.get_chat_id() == selected_chat_id);
+                                self.edit_chat_mode = EditMode::None;
+                            }
+                            None => {}
+                        },
                         _ => {}
                     }
                 });
-        });
+            });
 
         egui::SidePanel::left("edit_chats").show_animated(
             ctx,
@@ -308,44 +326,50 @@ impl eframe::App for App {
                     .show(ui, |ui| {
                         let mut chat_edit_mode_participant_edit_mode: EditMode = EditMode::None;
 
-                        self
-                                .chat_edit_window_content
-                                .participants
-                                .iter()
-                                .enumerate()
-                                .for_each(|(index, participant)| {
-                                    ui.horizontal(|ui| {
-                                        let contact = &self
-                                            .contacts
-                                            .iter()
-                                            .find(|contact| contact.public_key == *participant);
+                        self.chat_edit_window_content
+                            .participants
+                            .iter()
+                            .enumerate()
+                            .for_each(|(index, participant)| {
+                                ui.horizontal(|ui| {
+                                    let contact = &self
+                                        .contacts
+                                        .iter()
+                                        .find(|contact| contact.public_key == *participant);
 
-                                        if (contact.is_some()) {
-                                            ui.add(Label::new(
-                                                RichText::new(contact.unwrap().name.clone())
-                                                    .color(contact.unwrap().color.clone()),
-                                            ));
-                                        } else {
-                                            ui.add(Label::new(
-                                                RichText::new(participant.clone()).italics(),
-                                            ));
-                                        }
-
-                                        match self.edit_chat_mode {
-                                            EditMode::New => {
-                                                if ui.button("🗑").clicked() {
-                                                    chat_edit_mode_participant_edit_mode =
-                                                        EditMode::Delete(index);
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    });
-                                    ui.end_row();
+                                    if (contact.is_some()) {
+                                        ui.add(Label::new(
+                                            RichText::new(contact.unwrap().name.clone())
+                                                .color(contact.unwrap().color.clone()),
+                                        ));
+                                    } else {
+                                        ui.add(Label::new(
+                                            RichText::new(participant.clone()).italics(),
+                                        ));
+                                    }
                                 });
+                                match self.edit_chat_mode {
+                                    EditMode::New => {
+                                        if ui.button("🗑").clicked() {
+                                            chat_edit_mode_participant_edit_mode =
+                                                EditMode::Delete(index);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                ui.end_row();
+                            });
                     });
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui
+                        .add_enabled(
+                            self.chat_edit_window_content.participants.len() > 0
+                                && !self.chat_edit_window_content.name.is_empty(),
+                            egui::Button::new("Save"),
+                        )
+                        .on_disabled_hover_text("Please add at least one participant and a name.")
+                        .clicked()
+                    {
                         match self.edit_chat_mode {
                             EditMode::New => {
                                 let mut chat = Chat::new_chat(
@@ -354,6 +378,9 @@ impl eframe::App for App {
                                 chat.name = self.chat_edit_window_content.name.clone();
                                 self.chats.push(chat);
                                 self.edit_chat_mode = EditMode::None;
+                                if self.current_chat_index.is_none() {
+                                    self.current_chat_index = Some(self.chats.len() - 1);
+                                }
                             }
                             EditMode::Edit(idx) => {
                                 self.chats[idx].name = self.chat_edit_window_content.name.clone();
@@ -366,63 +393,70 @@ impl eframe::App for App {
             },
         );
 
-        egui::SidePanel::left("contacts").show_animated(ctx, self.show_contacts, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Contacts");
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    if ui.button("➕").clicked() {
-                        self.contact_edit_window_content =
-                            chat::ContactEditWindowContent::default();
-                        self.edit_contact_mode = EditMode::New;
-                    }
-                });
-            });
-            egui::Grid::new("conacts_grid")
-                .num_columns(match self.edit_chat_mode {
-                    EditMode::New => 3,
-                    _ => 2,
-                })
-                .striped(true)
-                .min_col_width(0.)
-                .show(ui, |ui| {
-                    self.contacts
-                        .iter()
-                        .enumerate()
-                        .for_each(|(index, contact)| {
-                            ui.horizontal(|ui| {
-                                match self.edit_chat_mode {
-                                    EditMode::New => {
-                                        if (ui.button("➕").clicked()) {
-                                            self.chat_edit_window_content
-                                                .participants
-                                                .push(contact.public_key.clone());
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                                ui.add(Label::new(
-                                    RichText::new(contact.name.clone()).color(contact.color),
-                                ));
-                            });
-                            if (ui.button("✏").clicked()) {
-                                self.edit_contact_mode = EditMode::Edit(index);
-                                self.contact_edit_window_content =
-                                    chat::ContactEditWindowContent::from_contact(contact);
-                            }
-                            if (ui.button("🗑").clicked()) {
-                                self.edit_contact_mode = EditMode::Delete(index);
-                            }
-                            ui.end_row();
-                        });
-                    match self.edit_contact_mode {
-                        EditMode::Delete(idx) => {
-                            self.contacts.remove(idx);
-                            self.edit_contact_mode = EditMode::None;
+        egui::SidePanel::left("contacts")
+            .min_width(100.)
+            .show_animated(ctx, self.show_contacts, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Contacts");
+                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                        if ui.button("➕").clicked() {
+                            self.contact_edit_window_content =
+                                chat::ContactEditWindowContent::default();
+                            self.edit_contact_mode = EditMode::New;
                         }
-                        _ => {}
-                    }
+                    });
                 });
-        });
+                egui::Grid::new("conacts_grid")
+                    .num_columns(match self.edit_chat_mode {
+                        EditMode::New => 3,
+                        _ => 2,
+                    })
+                    .striped(true)
+                    .min_col_width(0.)
+                    .show(ui, |ui| {
+                        self.contacts
+                            .iter()
+                            .enumerate()
+                            .for_each(|(index, contact)| {
+                                ui.horizontal(|ui| {
+                                    match self.edit_chat_mode {
+                                        EditMode::New => {
+                                            if (ui.button("➕").clicked()
+                                                && !self
+                                                    .chat_edit_window_content
+                                                    .participants
+                                                    .contains(&contact.public_key))
+                                            {
+                                                self.chat_edit_window_content
+                                                    .participants
+                                                    .push(contact.public_key.clone());
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    ui.add(Label::new(
+                                        RichText::new(contact.name.clone()).color(contact.color),
+                                    ));
+                                });
+                                if (ui.button("✏").clicked()) {
+                                    self.edit_contact_mode = EditMode::Edit(index);
+                                    self.contact_edit_window_content =
+                                        chat::ContactEditWindowContent::from_contact(contact);
+                                }
+                                if (ui.button("🗑").clicked()) {
+                                    self.edit_contact_mode = EditMode::Delete(index);
+                                }
+                                ui.end_row();
+                            });
+                        match self.edit_contact_mode {
+                            EditMode::Delete(idx) => {
+                                self.contacts.remove(idx);
+                                self.edit_contact_mode = EditMode::None;
+                            }
+                            _ => {}
+                        }
+                    });
+            });
 
         egui::SidePanel::left("edit_contacts").show_animated(
             ctx,
@@ -469,7 +503,15 @@ impl eframe::App for App {
                         ui.color_edit_button_rgb(&mut self.contact_edit_window_content.color);
                     });
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if ui
+                        .add_enabled(
+                            !self.contact_edit_window_content.public_key.is_empty()
+                                && !self.contact_edit_window_content.name.is_empty(),
+                            egui::Button::new("Save"),
+                        )
+                        .on_disabled_hover_text("Please add at least one participant and a name.")
+                        .clicked()
+                    {
                         match self.edit_contact_mode {
                             EditMode::New => {
                                 self.contacts.push(Contact::from_contact_window(

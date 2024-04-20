@@ -40,6 +40,10 @@ impl Chat {
     pub fn get_chat_messages(&self) -> &Vec<Message> {
         &self.messages
     }
+
+    pub fn get_chat_id(&self) -> &Uuid {
+        &self.chat_id
+    }
 }
 
 impl Default for ChatEditWindowContent {
