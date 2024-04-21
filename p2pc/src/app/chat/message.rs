@@ -21,6 +21,16 @@ impl Message {
         }
     }
 
+    pub fn new_with_id(sender_id: String, message: String, answer_to: Option<Uuid>, message_id: Uuid) -> Self {
+        Self {
+            sender: sender_id,
+            message_id,
+            content: message,
+            answer_to,
+            recieved_time: Local::now(),
+        }
+    }
+
     pub fn get_sender(&self) -> &String {
         &self.sender
     }

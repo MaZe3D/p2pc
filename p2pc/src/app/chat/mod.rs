@@ -42,14 +42,23 @@ impl Chat {
         }
     }
 
-    pub fn insert_message(&mut self, sender_id: String, message: String, answer_to: Option<Uuid>) {
+    pub fn insert_message(&mut self, sender_id: String, message: String, answer_to: Option<Uuid>, message_id: Uuid) {
         self.messages
-            .push(Message::new(sender_id, message.clone(), answer_to));
+            .push(Message::new_with_id(sender_id, message.clone(), answer_to, message_id));
     }
 
     pub fn new_chat(participants: Vec<String>) -> Self {
         Self {
             chat_id: Uuid::new_v4(),
+            messages: Vec::new(),
+            name: "New Chat".to_string(),
+            participants,
+        }
+    }
+
+    pub fn new_incoming_chat(participants: Vec<String>, chat_id: Uuid) -> Self {
+        Self {
+            chat_id,
             messages: Vec::new(),
             name: "New Chat".to_string(),
             participants,

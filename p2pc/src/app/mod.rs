@@ -191,8 +191,8 @@ impl App {
                     log::info!("failed to dial {}: {}", address, err);
                 }
                 p2pc_lib::ActionResult::SendMessage {
-                    message_id,
-                    chat_id,
+                    message_id: _,
+                    chat_id: _,
                     optional_errors,
                 } => {
                     if optional_errors.is_empty() {
@@ -204,19 +204,25 @@ impl App {
                             }
                         });
                     }
+                    egui_ctx.request_repaint();
                 }
             },
             p2pc_lib::Event::MessageReceived(p2pc_lib::ChatMessage {
-                mut participants,
+                participants,
                 content,
                 id,
                 chat_id,
                 answer_to,
             }) => {
-                if let Some(sender) = participants.pop() {
+                if let Some(sender) = participants.last() {
                     let mut chats = chats.lock().unwrap();
                     if let Some(mut chat) = chats.remove_chat(&chat_id) {
-                        chat.insert_message(sender, content, answer_to);
+                        chat.insert_message(sender.clone(), content, answer_to, id);
+                        chats.add_chat(chat);
+                    } else {
+                        let sender = sender.clone();
+                        let mut chat = Chat::new_incoming_chat(participants, chat_id);
+                        chat.insert_message(sender.clone(), content, answer_to, id);
                         chats.add_chat(chat);
                     }
                 }

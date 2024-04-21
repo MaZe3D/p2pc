@@ -60,8 +60,6 @@ fn build_swarm(
             };
 
             let gossipsub_config = libp2p::gossipsub::ConfigBuilder::default()
-                .heartbeat_interval(std::time::Duration::from_secs(10))
-                .validation_mode(libp2p::gossipsub::ValidationMode::Strict)
                 .message_id_fn(gossipsub_message_id_function) // content-address messages. No two messages of the same content will be propagated.
                 .build()?;
 
@@ -120,9 +118,17 @@ fn handle_swarm_event<F>(
             message,
         }) => {
             if let Ok(serialized_chat_message) = String::from_utf8(message.data.clone()) {
-                if let Ok(chat_message) =
+                if let Ok(mut chat_message) =
                     serde_json::from_str::<ChatMessage>(&serialized_chat_message)
                 {
+                    // remove own id
+                    let local_id = &swarm.local_peer_id().to_string();
+                    chat_message.participants = chat_message
+                        .participants
+                        .into_iter()
+                        .filter(|participant| participant != local_id)
+                        .collect();
+
                     callback(Event::MessageReceived(chat_message));
                 }
             }
