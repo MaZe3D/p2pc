@@ -6,6 +6,8 @@ mod chat;
 use chat::Chat;
 use chat::Contacts;
 
+mod keypair_wrapper;
+
 use self::chat::{ChatEditWindowContent, Contact, ContactEditWindowContent};
 use clap::Parser as _;
 
@@ -21,7 +23,6 @@ struct CliArguments {
     listen_addresses: Vec<libp2p::Multiaddr>,
 }
 
-
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -32,6 +33,7 @@ pub struct App {
     current_chat_index: Option<usize>,
 
     own_public_key: string::String,
+    keypair: keypair_wrapper::Keypair,
     chats: Vec<Chat>,
     contacts: Contacts,
 
@@ -99,61 +101,61 @@ impl Default for App {
             edit_contact_mode: EditMode::None,
             theme: Theme::MACCHIATO,
             p2pc: None,
+            keypair: keypair_wrapper::Keypair(libp2p::identity::Keypair::generate_ed25519()),
         }
     }
 }
 
-
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        cc.egui_ctx.set_zoom_factor(1.5);
+        setup_custom_fonts(&cc.egui_ctx);
+
+        let mut app: Self = match cc.storage {
+            Some(storage) => eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default(),
+            None => Default::default(),
+        };
+
+        let mut p2pc = {
+            let egui_ctx = cc.egui_ctx.clone();
+            p2pc_lib::P2pc::new(app.keypair.0.clone(), move |event| {
+                Self::handle_p2pc_event(event, &egui_ctx)
+            })
+            .expect("could not initialize p2pc")
+        };
 
         let args = CliArguments::parse();
         log::info!("{:?}", args);
 
-        let keypair = libp2p::identity::Keypair::generate_ed25519();
-        let mut p2pc = p2pc_lib::P2pc::new(keypair).unwrap();
-
-        for address in args.listen_addresses {
-            p2pc.execute(p2pc_lib::Action::ListenOn(address));
-        }
         for address in args.peer_addresses {
-            p2pc.execute(p2pc_lib::Action::Dial(address));
+            p2pc.execute(p2pc_lib::Action::Dial(address)).ok();
+        }
+        for address in args.listen_addresses {
+            p2pc.execute(p2pc_lib::Action::ListenOn(address)).ok();
         }
 
-        //loop {
-        //    while let Ok(event) = p2pc.poll_event() {
-        //        match event {
-        //            p2pc_lib::Event::ActionResult(action_result) => match action_result {
-        //                p2pc_lib::ActionResult::ListenOn(address, None) => {
-        //                    log::info!("successfully listening on {}", address);
-        //                }
-        //                p2pc_lib::ActionResult::ListenOn(address, Some(err)) => {
-        //                    log::info!("failed to listen on {}: {}", address, err);
-        //                }
-        //                p2pc_lib::ActionResult::Dial(address, None) => {
-        //                    log::info!("successfully dialed {}", address);
-        //                }
-        //                p2pc_lib::ActionResult::Dial(address, Some(err)) => {
-        //                    log::info!("failed to dial {}: {}", address, err);
-        //                }
-        //            },
-        //        }
-        //    }
-        //    std::thread::sleep(std::time::Duration::from_millis(100));
-        //}
+        app.p2pc = Some(p2pc);
+        app
+    }
 
-        cc.egui_ctx.set_zoom_factor(1.5);
-
-        setup_custom_fonts(&cc.egui_ctx);
-
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
-
-        Self {
-            p2pc: Some(p2pc),
-            ..Default::default()
+    fn handle_p2pc_event(event: p2pc_lib::Event, egui_ctx: &egui::Context) {
+        match event {
+            p2pc_lib::Event::ActionResult(action_result) => match action_result {
+                p2pc_lib::ActionResult::ListenOn(address, None) => {
+                    log::info!("successfully listening on {}", address);
+                    egui_ctx.request_repaint();
+                }
+                p2pc_lib::ActionResult::ListenOn(address, Some(err)) => {
+                    log::info!("failed to listen on {}: {}", address, err);
+                }
+                p2pc_lib::ActionResult::Dial(address, None) => {
+                    log::info!("successfully dialed {}", address);
+                }
+                p2pc_lib::ActionResult::Dial(address, Some(err)) => {
+                    log::info!("failed to dial {}: {}", address, err);
+                }
+            },
         }
     }
 

@@ -1,8 +1,22 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-fn main() -> eframe::Result<()> {
+fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let tokio_runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // make `tokio::spawn` available
+    let _enter = tokio_runtime.enter();
+
+    // execute the runtime in seperate thread
+    std::thread::spawn(move || {
+        tokio_runtime.block_on(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        })
+    });
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -20,5 +34,5 @@ fn main() -> eframe::Result<()> {
         "p2pc",
         native_options,
         Box::new(|cc| Box::new(p2pc::App::new(cc))),
-    )
+    ).unwrap();
 }

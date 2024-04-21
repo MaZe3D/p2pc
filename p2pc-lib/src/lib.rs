@@ -18,13 +18,14 @@ pub enum Event {
 }
 
 pub struct P2pc {
-    tokio_runtime: tokio::runtime::Runtime,
-    sender: tokio::sync::mpsc::Sender<Action>,
-    receiver: std::sync::mpsc::Receiver<Event>,
+    sender: tokio::sync::mpsc::UnboundedSender<Action>,
 }
 
 impl P2pc {
-    pub fn new(keypair: libp2p::identity::Keypair) -> anyhow::Result<Self> {
+    pub fn new<F>(keypair: libp2p::identity::Keypair, mut callback: F) -> anyhow::Result<Self>
+    where
+        F: FnMut(Event) + Send + 'static,
+    {
         let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
@@ -38,13 +39,10 @@ impl P2pc {
             })
             .build();
 
-        let (sender_outside_tokio, receiver_inside_tokio) = tokio::sync::mpsc::channel(100);
-        let (sender_inside_tokio, receiver_outside_tokio) = std::sync::mpsc::channel();
+        let (sender_outside_tokio, receiver_inside_tokio) = tokio::sync::mpsc::unbounded_channel();
 
-        // start tokio runtime
-        let tokio_runtime = tokio::runtime::Runtime::new()?;
-        tokio_runtime.spawn(async move {
-            let sender = sender_inside_tokio;
+        // start event loop
+        tokio::spawn(async move {
             let mut receiver = receiver_inside_tokio;
             loop {
                 let mut action_received = None;
@@ -62,39 +60,28 @@ impl P2pc {
                     action = receiver.recv() => action_received = action
                 }
 
-                match action_received {
-                    None => {}
-                    Some(action) => {
-                        sender
-                            .send(Event::ActionResult(match action {
-                                Action::ListenOn(address) => ActionResult::ListenOn(
-                                    address.clone(),
-                                    swarm.listen_on(address).err(),
-                                ),
-                                Action::Dial(address) => {
-                                    ActionResult::Dial(address.clone(), swarm.dial(address).err())
-                                }
-                            }))
-                            .unwrap();
-                    }
+                if let Some(action) = action_received {
+                    callback(Event::ActionResult(match action {
+                        Action::ListenOn(address) => {
+                            ActionResult::ListenOn(address.clone(), swarm.listen_on(address).err())
+                        }
+                        Action::Dial(address) => {
+                            ActionResult::Dial(address.clone(), swarm.dial(address).err())
+                        }
+                    }));
                 }
             }
         });
 
         Ok(Self {
-            tokio_runtime,
             sender: sender_outside_tokio,
-            receiver: receiver_outside_tokio,
         })
     }
 
-    pub fn execute(&mut self, action: Action) {
-        let sender = self.sender.clone();
-        self.tokio_runtime
-            .spawn(async move { sender.send(action).await });
-    }
-
-    pub fn poll_event(&self) -> anyhow::Result<Event> {
-        Ok(self.receiver.try_recv()?)
+    pub fn execute(
+        &mut self,
+        action: Action,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<Action>> {
+        self.sender.send(action)
     }
 }
