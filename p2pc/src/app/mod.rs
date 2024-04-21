@@ -1,10 +1,8 @@
-use std::ops::Mul;
 use std::str::FromStr;
 
 use egui::{vec2, Align, Button, Label, Layout, RichText, TextEdit};
 use egui::{Grid, ScrollArea};
 
-use libp2p::swarm::handler::multi;
 use libp2p::Multiaddr;
 use uuid::Uuid;
 
@@ -110,7 +108,7 @@ impl Default for App {
             edit_contact_mode: EditMode::None,
             theme: Theme::MACCHIATO,
             p2pc: None,
-            keypair: keypair_wrapper::Keypair(libp2p::identity::Keypair::generate_ed25519()),
+            keypair: Default::default(),
         }
     }
 }
@@ -150,7 +148,7 @@ impl App {
 
         let mut p2pc = {
             let egui_ctx = cc.egui_ctx.clone();
-            p2pc_lib::P2pc::new(app.keypair.0.clone(), move |event| {
+            p2pc_lib::P2pc::new(app.keypair.get_keypair(), move |event| {
                 Self::handle_p2pc_event(event, &egui_ctx)
             })
             .expect("could not initialize p2pc")
@@ -186,7 +184,26 @@ impl App {
                 p2pc_lib::ActionResult::Dial(address, Some(err)) => {
                     log::info!("failed to dial {}: {}", address, err);
                 }
+                p2pc_lib::ActionResult::SendMessage {
+                    message_id,
+                    chat_id,
+                    optional_errors,
+                } => {
+                    if optional_errors.is_empty() {
+                        log::info!("sending message failed");
+                    } else if optional_errors
+                        .iter()
+                        .any(|optional_error| optional_error.is_some())
+                    {
+                        log::info!("sending message to some or all participants failed");
+                    } else {
+                        log::info!("successfully sent message");
+                    }
+                }
             },
+            p2pc_lib::Event::MessageReceived { message } => {
+                log::info!("message received: {}", message);
+            }
         }
     }
 
@@ -210,7 +227,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
-        let own_public_key_base_64 = self.keypair.get_public_key_base64();
+        let own_public_key_base_64 = self.keypair.get_peer_id_base64();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -270,23 +287,12 @@ impl eframe::App for App {
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
                             ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                                let mut message_send = false;
-                                if ui
-                                    .add_enabled(
-                                        !self.current_message.trim().is_empty(),
-                                        Button::new("Send ➡")
-                                            .min_size(vec2(0., ui.available_height())),
-                                    )
-                                    .clicked()
-                                {
-                                    current_chat.new_message(
-                                        own_public_key_base_64.clone(),
-                                        self.current_message.trim().to_string(),
-                                        self.current_message_answer_to,
-                                    );
-                                    message_send = true;
-                                }
-                                let response = ui.add(
+                                let button_response = ui.add_enabled(
+                                    !self.current_message.trim().is_empty(),
+                                    Button::new("Send ➡").min_size(vec2(0., ui.available_height())),
+                                );
+
+                                let textedit_response = ui.add(
                                     egui::TextEdit::singleline(&mut self.current_message)
                                         .desired_rows(1)
                                         .hint_text(
@@ -295,20 +301,28 @@ impl eframe::App for App {
                                         )
                                         .min_size(ui.available_size()),
                                 );
-                                if response.lost_focus()
-                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+
+                                // send message
+                                if button_response.clicked()
+                                    || (textedit_response.lost_focus()
+                                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                                 {
-                                    current_chat.new_message(
-                                        own_public_key_base_64.clone(),
-                                        self.current_message.trim().to_string(),
-                                        self.current_message_answer_to,
-                                    );
-                                    message_send = true;
-                                }
-                                if message_send {
-                                    self.current_message.clear();
-                                    self.current_message_answer_to = None;
-                                    response.request_focus();
+                                    let message = self.current_message.trim().to_string();
+                                    let targets = current_chat.get_participants();
+                                    log::debug!("sending message to {:?}: {}", targets, message);
+
+                                    if let Some(p2pc) = &mut self.p2pc {
+                                        current_chat.send_message(
+                                            p2pc,
+                                            own_public_key_base_64.clone(),
+                                            message,
+                                            self.current_message_answer_to,
+                                        );
+                                        self.current_message.clear();
+                                        self.current_message_answer_to = None;
+                                    }
+
+                                    textedit_response.request_focus();
                                 }
                             });
                         });
@@ -480,7 +494,7 @@ impl eframe::App for App {
                                     });
                                     match self.edit_chat_mode {
                                         EditMode::New => {
-                                            if ui.button("🗑").clicked() {
+                                            if index != 0 && ui.button("🗑").clicked() {
                                                 chat_edit_mode_participant_edit_mode =
                                                     EditMode::Delete(index);
                                             }
@@ -511,9 +525,8 @@ impl eframe::App for App {
                         {
                             match self.edit_chat_mode {
                                 EditMode::New => {
-                                    let mut chat = Chat::new_chat(
-                                        self.chat_edit_window_content.participants.clone(),
-                                    );
+                                    let mut chat =
+                                        Chat::new_chat(vec![self.keypair.get_peer_id_base64()]);
                                     chat.name = self.chat_edit_window_content.name.clone();
                                     self.chats.push(chat);
                                     self.edit_chat_mode = EditMode::None;
@@ -690,25 +703,29 @@ impl eframe::App for App {
             ui.separator();
             ScrollArea::vertical().show(ui, |ui| {
                 ui.collapsing("Peers", |ui| {
-                    Grid::new("peer_list_grid").num_columns(2).min_col_width(0.).show(ui, |ui| {
-                        let mut peer_list_entry_edit_mode: EditMode<usize> = EditMode::None;
-                        for (peer_index, peer) in self.settings.peers.iter().enumerate() {
-                            if ui.button("🗑").on_hover_text("Remove peer").clicked() {
-                                peer_list_entry_edit_mode = EditMode::Delete(peer_index);
+                    Grid::new("peer_list_grid")
+                        .num_columns(2)
+                        .min_col_width(0.)
+                        .show(ui, |ui| {
+                            let mut peer_list_entry_edit_mode: EditMode<usize> = EditMode::None;
+                            for (peer_index, peer) in self.settings.peers.iter().enumerate() {
+                                if ui.button("🗑").on_hover_text("Remove peer").clicked() {
+                                    peer_list_entry_edit_mode = EditMode::Delete(peer_index);
+                                }
+                                ui.add(Label::new(peer.to_string()).truncate(true));
+                                ui.end_row();
                             }
-                            ui.add(Label::new(peer.to_string()).truncate(true));
-                            ui.end_row();
-                        }
-                        if let EditMode::Delete(peer_index) = peer_list_entry_edit_mode {
-                            self.settings.peers.remove(peer_index);
-                        }
-                    });
+                            if let EditMode::Delete(peer_index) = peer_list_entry_edit_mode {
+                                self.settings.peers.remove(peer_index);
+                            }
+                        });
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         if ui
                             .add_enabled(
                                 self.settings.current_peer_is_valid,
                                 Button::new("➕ Add Peer"),
-                            ).on_disabled_hover_text("Please enter a valid Multi Address.")
+                            )
+                            .on_disabled_hover_text("Please enter a valid Multi Address.")
                             .clicked()
                         {
                             match Multiaddr::from_str(&self.settings.current_peer) {

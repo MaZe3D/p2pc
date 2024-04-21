@@ -1,6 +1,6 @@
 use base64::Engine;
 
-pub struct Keypair(pub libp2p::identity::Keypair);
+pub struct Keypair(libp2p::identity::Keypair);
 
 impl serde::Serialize for Keypair {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -35,7 +35,11 @@ impl Default for Keypair {
 }
 
 impl Keypair {
-    pub fn get_public_key_base64(&self) -> String {
-        base64::engine::general_purpose::STANDARD.encode(self.0.public().encode_protobuf())
+    pub fn get_keypair(&self) -> libp2p::identity::Keypair {
+        self.0.clone()
+    }
+
+    pub fn get_peer_id_base64(&self) -> String {
+        base64::engine::general_purpose::STANDARD.encode(self.0.public().to_peer_id().to_bytes())
     }
 }

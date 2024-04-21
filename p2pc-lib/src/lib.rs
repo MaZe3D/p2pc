@@ -1,10 +1,20 @@
-use std::hash::Hasher as _;
+use std::hash::{Hash as _, Hasher as _};
 
+use base64::Engine as _;
 use libp2p::futures::StreamExt as _;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub participants: Vec<String>,
+    pub content: String,
+    pub id: uuid::Uuid,
+    pub chat_id: uuid::Uuid,
+}
 
 pub enum Action {
     ListenOn(libp2p::Multiaddr),
     Dial(libp2p::Multiaddr),
+    SendMessage(ChatMessage),
 }
 
 pub enum ActionResult {
@@ -13,10 +23,16 @@ pub enum ActionResult {
         Option<libp2p::TransportError<std::io::Error>>,
     ),
     Dial(libp2p::Multiaddr, Option<libp2p::swarm::DialError>),
+    SendMessage {
+        message_id: uuid::Uuid,
+        chat_id: uuid::Uuid,
+        optional_errors: Vec<Option<libp2p::gossipsub::PublishError>>,
+    },
 }
 
 pub enum Event {
     ActionResult(ActionResult),
+    MessageReceived { message: String },
 }
 
 pub struct P2pc {
@@ -35,14 +51,17 @@ fn build_swarm(
         )?
         .with_behaviour(|key| {
             let gossipsub_message_id_function = |message: &libp2p::gossipsub::Message| {
-                let mut s = std::hash::DefaultHasher::new();
-                std::hash::Hash::hash(&message.data, &mut s);
-                libp2p::gossipsub::MessageId::from(s.finish().to_string())
+                let mut hasher = std::hash::DefaultHasher::new();
+                message.data.hash(&mut hasher);
+                if let Some(sequence_number) = message.sequence_number {
+                    sequence_number.hash(&mut hasher);
+                }
+                libp2p::gossipsub::MessageId::from(hasher.finish().to_string())
             };
 
             let gossipsub_config = libp2p::gossipsub::ConfigBuilder::default()
-                .heartbeat_interval(std::time::Duration::from_secs(10)) // This is set to aid debugging by not cluttering the log space
-                .validation_mode(libp2p::gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
+                .heartbeat_interval(std::time::Duration::from_secs(10))
+                .validation_mode(libp2p::gossipsub::ValidationMode::Strict)
                 .message_id_fn(gossipsub_message_id_function) // content-address messages. No two messages of the same content will be propagated.
                 .build()?;
 
@@ -69,31 +88,66 @@ async fn run_event_loop<F>(
 ) where
     F: FnMut(Event) + Send + 'static,
 {
-    loop {
-        let mut action_received = None;
-        tokio::select! {
-            swarm_event = swarm.select_next_some() =>
-                match swarm_event {
-                    libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
-                        log::info!("listening on {address:?}")
-                    }
-                    libp2p::swarm::SwarmEvent::Behaviour(event) => println!("{event:?}"),
-                    event => {
-                        log::info!("{event:?}");
-                    }
-                },
-            action = receiver.recv() => action_received = action
-        }
+    let base64_id = base64::engine::general_purpose::STANDARD.encode(swarm.local_peer_id().to_bytes());
+    let this_node_topic = libp2p::gossipsub::IdentTopic::new(base64_id);
+    log::info!("subscribing to this node's topic: {}", this_node_topic);
+    swarm.behaviour_mut().subscribe(&this_node_topic).ok();
 
-        if let Some(action) = action_received {
-            callback(Event::ActionResult(match action {
-                Action::ListenOn(address) => {
-                    ActionResult::ListenOn(address.clone(), swarm.listen_on(address).err())
-                }
-                Action::Dial(address) => {
-                    ActionResult::Dial(address.clone(), swarm.dial(address).err())
-                }
-            }));
+    loop {
+        tokio::select! {
+            swarm_event = swarm.select_next_some() => handle_swarm_event(&mut swarm, &swarm_event),
+            Some(action) = receiver.recv() => {
+                let action_result = handle_action(&mut swarm, action);
+                callback(Event::ActionResult(action_result));
+            }
+        }
+    }
+}
+
+fn handle_swarm_event(
+    swarm: &mut libp2p::Swarm<libp2p::gossipsub::Behaviour>,
+    swarm_event: &libp2p::swarm::SwarmEvent<libp2p::gossipsub::Event>,
+) {
+    match swarm_event {
+        libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
+            log::info!("listening on {address:?}")
+        }
+        libp2p::swarm::SwarmEvent::Behaviour(event) => println!("{event:?}"),
+        event => {
+            log::info!("{event:?}");
+        }
+    }
+}
+
+fn handle_action(
+    swarm: &mut libp2p::Swarm<libp2p::gossipsub::Behaviour>,
+    action: Action,
+) -> ActionResult {
+    match action {
+        Action::ListenOn(address) => {
+            ActionResult::ListenOn(address.clone(), swarm.listen_on(address).err())
+        }
+        Action::Dial(address) => ActionResult::Dial(address.clone(), swarm.dial(address).err()),
+        Action::SendMessage(chat_message) => {
+            let optional_errors = match serde_json::to_string(&chat_message) {
+                Ok(serialized_message) => chat_message
+                    .participants
+                    .iter()
+                    .map(|participant| {
+                        let topic = libp2p::gossipsub::IdentTopic::new(participant);
+                        swarm
+                            .behaviour_mut()
+                            .publish(topic, serialized_message.as_bytes())
+                            .err()
+                    })
+                    .collect(),
+                Err(_) => vec![],
+            };
+            ActionResult::SendMessage {
+                message_id: chat_message.id,
+                chat_id: chat_message.chat_id,
+                optional_errors,
+            }
         }
     }
 }
@@ -105,7 +159,7 @@ impl P2pc {
     {
         let swarm = build_swarm(keypair)?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(async move { run_event_loop(swarm, receiver, callback) });
+        tokio::spawn(run_event_loop(swarm, receiver, callback));
         Ok(Self { sender })
     }
 
