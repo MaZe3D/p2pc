@@ -1,6 +1,6 @@
 use egui::{vec2, Align, Button, Label, Layout, RichText};
 
-use base64::{engine::general_purpose, Engine as _};
+
 use uuid::Uuid;
 
 mod chat;
