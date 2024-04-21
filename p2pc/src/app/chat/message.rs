@@ -16,7 +16,7 @@ impl Message {
             sender: sender_id,
             message_id: uuid::Uuid::new_v4(),
             content: message,
-            answer_to: answer_to,
+            answer_to,
             recieved_time: Local::now(),
         }
     }

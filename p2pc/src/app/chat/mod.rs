@@ -26,7 +26,7 @@ impl Chat {
             chat_id: Uuid::new_v4(),
             messages: Vec::new(),
             name: "New Chat".to_string(),
-            participants: participants,
+            participants,
         }
     }
 

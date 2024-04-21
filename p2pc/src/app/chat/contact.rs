@@ -42,7 +42,7 @@ impl Default for ContactEditWindowContent {
         Self {
             public_key: "".to_string(),
             name: "".to_string(),
-            color: (|| {
+            color: {
                 let rgb_color = RandomColor::new()
                     .luminosity(Luminosity::Bright) // Optional
                     .seed(rand::random::<i32>()) // Optional
@@ -53,7 +53,7 @@ impl Default for ContactEditWindowContent {
                     rgb_color[1] as f32 / 255.,
                     rgb_color[2] as f32 / 255.,
                 ]
-            })(),
+            },
         }
     }
 }

@@ -1,5 +1,5 @@
 use egui::{vec2, Align, Button, Label, Layout, RichText};
-use std::string;
+
 
 use uuid::Uuid;
 use base64::{engine::general_purpose, Engine as _};
@@ -160,10 +160,10 @@ impl App {
 
     fn update_theme(&mut self, ctx: &egui::Context) {
         match self.theme {
-            Theme::LATTE => catppuccin_egui::set_theme(&ctx, catppuccin_egui::LATTE),
-            Theme::FRAPPE => catppuccin_egui::set_theme(&ctx, catppuccin_egui::FRAPPE),
-            Theme::MACCHIATO => catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO),
-            Theme::MOCHA => catppuccin_egui::set_theme(&ctx, catppuccin_egui::MOCHA),
+            Theme::LATTE => catppuccin_egui::set_theme(ctx, catppuccin_egui::LATTE),
+            Theme::FRAPPE => catppuccin_egui::set_theme(ctx, catppuccin_egui::FRAPPE),
+            Theme::MACCHIATO => catppuccin_egui::set_theme(ctx, catppuccin_egui::MACCHIATO),
+            Theme::MOCHA => catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA),
         }
     }
 }
@@ -219,12 +219,9 @@ impl eframe::App for App {
                 ui.separator();
                 if ui
                     .add(egui::Label::new(bytes_to_base64(&self.keypair.0.public().encode_protobuf())).truncate(true))
-                    .on_hover_text(format!("Click to copy Public Key"))
-                    .clicked()
-                {
-                    if !is_web {
-                        ctx.output_mut(|o| o.copied_text = bytes_to_base64(&self.keypair.0.to_protobuf_encoding().unwrap()));
-                    }
+                    .on_hover_text("Click to copy Public Key".to_string())
+                    .clicked() && !is_web {
+                    ctx.output_mut(|o| o.copied_text = bytes_to_base64(&self.keypair.0.to_protobuf_encoding().unwrap()));
                 };
             });
         });
@@ -335,7 +332,7 @@ impl eframe::App for App {
                         EditMode::Delete(idx) => match self.current_chat_index {
                             Some(selected_chat_index) => {
                                 let selected_chat_id =
-                                    self.chats[selected_chat_index].get_chat_id().clone();
+                                    *self.chats[selected_chat_index].get_chat_id();
                                 self.chats.remove(idx);
 
                                 self.current_chat_index = self
@@ -421,7 +418,7 @@ impl eframe::App for App {
                                         if contact.is_some() {
                                             ui.add(Label::new(
                                                 RichText::new(contact.unwrap().name.clone())
-                                                    .color(contact.unwrap().color.clone()),
+                                                    .color(contact.unwrap().color),
                                             ));
                                         } else {
                                             ui.add(Label::new(
@@ -451,7 +448,7 @@ impl eframe::App for App {
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(
-                                self.chat_edit_window_content.participants.len() > 0
+                                !self.chat_edit_window_content.participants.is_empty()
                                     && !self.chat_edit_window_content.name.is_empty(),
                                 egui::Button::new("Save"),
                             )
@@ -712,10 +709,7 @@ impl eframe::App for App {
                                                                         })
                                                                         .color(egui::Color32::RED),
                                                                     ))
-                                                                    .on_hover_text(format!(
-                                                                        "{}",
-                                                                        &message.get_sender()
-                                                                    ));
+                                                                    .on_hover_text((&message.get_sender()).to_string());
 
                                                                 sender_label_response.context_menu(
                                                                     |ui| {
@@ -743,7 +737,7 @@ impl eframe::App for App {
                                                     message_label_response.context_menu(|ui| {
                                                         if ui.button("⮪ Answer").clicked() {
                                                             ui.close_menu();
-                                                            self.current_message_answer_to = Some(message.get_message_id().clone());
+                                                            self.current_message_answer_to = Some(*message.get_message_id());
                                                         }
                                                     });
                                                 });
@@ -804,5 +798,5 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 }
 
 fn bytes_to_base64(bytes: &[u8]) -> String {
-    general_purpose::STANDARD.encode(&bytes)
+    general_purpose::STANDARD.encode(bytes)
 }

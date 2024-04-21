@@ -2,17 +2,12 @@ use std::collections::HashMap;
 use super::Contact;
 
 #[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Default)]
 pub struct Contacts {
     contacts: HashMap<String, Contact>,
 }
 
-impl Default for Contacts {
-    fn default() -> Self {
-        Self {
-            contacts: HashMap::new(),
-        }
-    }
-}
+
 
 impl Contacts {
     pub fn add_contact(&mut self, contact: Contact) {
