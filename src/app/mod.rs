@@ -163,7 +163,7 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.label("ptpc");
+                ui.label("p2pc");
                 ui.separator();
                 if ui
                     .add(egui::Label::new(&self.own_public_key).truncate(true))

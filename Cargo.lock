@@ -961,23 +961,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eframe_template"
-version = "0.1.0"
-dependencies = [
- "catppuccin-egui",
- "chrono",
- "eframe",
- "egui",
- "env_logger",
- "log",
- "rand",
- "random_color",
- "serde",
- "uuid",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "egui"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2087,6 +2070,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95fc56cda0b5c3325f5fbbd7ff9fda9e02bb00bb3dac51252d2f1bfa1cb8cc8c"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "ptpc"
+version = "0.1.0"
+dependencies = [
+ "catppuccin-egui",
+ "chrono",
+ "eframe",
+ "egui",
+ "env_logger",
+ "log",
+ "rand",
+ "random_color",
+ "serde",
+ "uuid",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-    name         = "eframe_template"
+    name         = "ptpc"
     version      = "0.1.0"
     authors      = [ "Nicolai Bergmann", "Mark Orlando Zeller" ]
     edition      = "2021"
