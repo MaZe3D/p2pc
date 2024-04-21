@@ -8,6 +8,7 @@ pub struct ChatMessage {
     pub content: String,
     pub id: uuid::Uuid,
     pub chat_id: uuid::Uuid,
+    pub answer_to: Option<uuid::Uuid>,
 }
 
 pub enum Action {
@@ -31,7 +32,7 @@ pub enum ActionResult {
 
 pub enum Event {
     ActionResult(ActionResult),
-    MessageReceived { message: String },
+    MessageReceived(ChatMessage),
 }
 
 pub struct P2pc {
@@ -93,7 +94,7 @@ async fn run_event_loop<F>(
 
     loop {
         tokio::select! {
-            swarm_event = swarm.select_next_some() => handle_swarm_event(&mut swarm, &swarm_event),
+            swarm_event = swarm.select_next_some() => handle_swarm_event(&mut swarm, &swarm_event, &mut callback),
             Some(action) = receiver.recv() => {
                 let action_result = handle_action(&mut swarm, action);
                 callback(Event::ActionResult(action_result));
@@ -102,18 +103,31 @@ async fn run_event_loop<F>(
     }
 }
 
-fn handle_swarm_event(
+fn handle_swarm_event<F>(
     swarm: &mut libp2p::Swarm<libp2p::gossipsub::Behaviour>,
     swarm_event: &libp2p::swarm::SwarmEvent<libp2p::gossipsub::Event>,
-) {
+    mut callback: &mut F,
+) where
+    F: FnMut(Event) + Send + 'static,
+{
     match swarm_event {
         libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
             log::info!("listening on {address:?}")
         }
-        libp2p::swarm::SwarmEvent::Behaviour(event) => println!("{event:?}"),
-        event => {
-            log::info!("{event:?}");
+        libp2p::swarm::SwarmEvent::Behaviour(libp2p::gossipsub::Event::Message {
+            propagation_source,
+            message_id,
+            message,
+        }) => {
+            if let Ok(serialized_chat_message) = String::from_utf8(message.data.clone()) {
+                if let Ok(chat_message) =
+                    serde_json::from_str::<ChatMessage>(&serialized_chat_message)
+                {
+                    callback(Event::MessageReceived(chat_message));
+                }
+            }
         }
+        event => log::info!("{event:?}"),
     }
 }
 
@@ -128,7 +142,9 @@ fn handle_action(
         Action::Dial(address) => ActionResult::Dial(address.clone(), swarm.dial(address).err()),
         Action::SendMessage(mut chat_message) => {
             let destinations = chat_message.participants.clone();
-            chat_message.participants.push(swarm.local_peer_id().to_string());
+            chat_message
+                .participants
+                .push(swarm.local_peer_id().to_string());
             let optional_errors = match serde_json::to_string(&chat_message) {
                 Ok(serialized_message) => destinations
                     .iter()

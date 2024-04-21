@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 mod chat;
 use chat::Chat;
+use chat::Chats;
 use chat::Contacts;
 
 mod keypair_wrapper;
@@ -34,10 +35,10 @@ pub struct App {
     current_message: String,
     current_message_answer_to: Option<Uuid>,
     auto_scroll: bool,
-    current_chat_index: Option<usize>,
+    current_chat_id: Option<uuid::Uuid>,
 
     keypair: keypair_wrapper::Keypair,
-    chats: Vec<Chat>,
+    chats: std::sync::Arc<std::sync::Mutex<Chats>>,
     contacts: Contacts,
 
     drop_chat_messages_from_unkown: bool,
@@ -62,7 +63,7 @@ pub struct App {
     #[serde(skip)]
     chat_edit_window_content: ChatEditWindowContent,
     #[serde(skip)]
-    edit_chat_mode: EditMode<usize>,
+    edit_chat_mode: EditMode<uuid::Uuid>,
     #[serde(skip)]
     show_contacts: bool,
 
@@ -90,7 +91,7 @@ impl Default for App {
     fn default() -> Self {
         Self {
             // Example stuff:
-            current_chat_index: Option::None,
+            current_chat_id: Option::None,
             auto_scroll: true,
             show_chats: false,
             show_edit_chat: false,
@@ -98,7 +99,7 @@ impl Default for App {
             show_settings: false,
             settings: Settings::default(),
             drop_chat_messages_from_unkown: false,
-            chats: Vec::new(),
+            chats: std::sync::Arc::new(std::sync::Mutex::new(Chats::default())),
             contacts: Contacts::default(),
             current_message: String::new(),
             current_message_answer_to: None,
@@ -148,8 +149,9 @@ impl App {
 
         let mut p2pc = {
             let egui_ctx = cc.egui_ctx.clone();
+            let chats = app.chats.clone();
             p2pc_lib::P2pc::new(app.keypair.get_keypair(), move |event| {
-                Self::handle_p2pc_event(event, &egui_ctx)
+                Self::handle_p2pc_event(event, &egui_ctx, chats.clone())
             })
             .expect("could not initialize p2pc")
         };
@@ -168,7 +170,11 @@ impl App {
         app
     }
 
-    fn handle_p2pc_event(event: p2pc_lib::Event, egui_ctx: &egui::Context) {
+    fn handle_p2pc_event(
+        event: p2pc_lib::Event,
+        egui_ctx: &egui::Context,
+        mut chats: std::sync::Arc<std::sync::Mutex<Chats>>,
+    ) {
         match event {
             p2pc_lib::Event::ActionResult(action_result) => match action_result {
                 p2pc_lib::ActionResult::ListenOn(address, None) => {
@@ -200,8 +206,20 @@ impl App {
                     }
                 }
             },
-            p2pc_lib::Event::MessageReceived { message } => {
-                log::info!("message received: {}", message);
+            p2pc_lib::Event::MessageReceived(p2pc_lib::ChatMessage {
+                mut participants,
+                content,
+                id,
+                chat_id,
+                answer_to,
+            }) => {
+                if let Some(sender) = participants.pop() {
+                    let mut chats = chats.lock().unwrap();
+                    if let Some(mut chat) = chats.remove_chat(&chat_id) {
+                        chat.insert_message(sender, content, answer_to);
+                        chats.add_chat(chat);
+                    }
+                }
             }
         }
     }
@@ -224,13 +242,9 @@ impl eframe::App for App {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
         let own_public_key_base_64 = self.keypair.get_peer_id();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
             egui::menu::bar(ui, |ui| {
                 if ui.selectable_label(self.show_chats, "Chats").clicked() {
                     self.show_chats = !self.show_chats;
@@ -278,63 +292,62 @@ impl eframe::App for App {
             });
         });
 
-        if let Some(chat_index) = self.current_chat_index {
-            if let Some(current_chat) = self.chats.get_mut(chat_index) {
-                egui::TopBottomPanel::bottom("Send Chat Message")
+        if let Some(chat_id) = self.current_chat_id {
+            egui::TopBottomPanel::bottom("Send Chat Message")
+                .show_separator_line(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                            let button_response = ui.add_enabled(
+                                !self.current_message.trim().is_empty(),
+                                Button::new("Send ➡").min_size(vec2(0., ui.available_height())),
+                            );
+
+                            let textedit_response = ui.add(
+                                egui::TextEdit::singleline(&mut self.current_message)
+                                    .desired_rows(1)
+                                    .hint_text(
+                                        RichText::new("Type a message...")
+                                            .color(egui::Color32::GRAY),
+                                    )
+                                    .min_size(ui.available_size()),
+                            );
+
+                            // send message
+                            if button_response.clicked()
+                                || (textedit_response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                            {
+                                if let Some(p2pc) = &mut self.p2pc {
+                                    self.chats.lock().unwrap().send_message(
+                                        &chat_id,
+                                        p2pc,
+                                        own_public_key_base_64.clone(),
+                                        self.current_message.trim().to_string(),
+                                        self.current_message_answer_to,
+                                    );
+                                    self.current_message.clear();
+                                    self.current_message_answer_to = None;
+                                }
+
+                                textedit_response.request_focus();
+                            }
+                        });
+                    });
+                });
+            if let Some(answer_to) = self.current_message_answer_to {
+                egui::TopBottomPanel::bottom("answer_to_message")
                     .show_separator_line(false)
                     .resizable(false)
                     .show(ctx, |ui| {
-                        ui.vertical(|ui| {
-                            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                                let button_response = ui.add_enabled(
-                                    !self.current_message.trim().is_empty(),
-                                    Button::new("Send ➡").min_size(vec2(0., ui.available_height())),
-                                );
-
-                                let textedit_response = ui.add(
-                                    egui::TextEdit::singleline(&mut self.current_message)
-                                        .desired_rows(1)
-                                        .hint_text(
-                                            RichText::new("Type a message...")
-                                                .color(egui::Color32::GRAY),
-                                        )
-                                        .min_size(ui.available_size()),
-                                );
-
-                                // send message
-                                if button_response.clicked()
-                                    || (textedit_response.lost_focus()
-                                        && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                                {
-                                    let message = self.current_message.trim().to_string();
-                                    let targets = current_chat.get_participants();
-                                    log::debug!("sending message to {:?}: {}", targets, message);
-
-                                    if let Some(p2pc) = &mut self.p2pc {
-                                        current_chat.send_message(
-                                            p2pc,
-                                            own_public_key_base_64.clone(),
-                                            message,
-                                            self.current_message_answer_to,
-                                        );
-                                        self.current_message.clear();
-                                        self.current_message_answer_to = None;
-                                    }
-
-                                    textedit_response.request_focus();
-                                }
-                            });
-                        });
-                    });
-                if let Some(answer_to) = self.current_message_answer_to {
-                    egui::TopBottomPanel::bottom("answer_to_message")
-                        .show_separator_line(false)
-                        .resizable(false)
-                        .show(ctx, |ui| {
-                            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                                if ui.button("❌").clicked() {
-                                    self.current_message_answer_to = None;
-                                }
+                        ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                            if ui.button("❌").clicked() {
+                                self.current_message_answer_to = None;
+                            }
+                            if let Some(current_chat) =
+                                self.chats.lock().unwrap().get_chat(&chat_id)
+                            {
                                 if let Some(answer_to_message) =
                                     current_chat.get_message_from_id(&answer_to)
                                 {
@@ -346,9 +359,9 @@ impl eframe::App for App {
                                         .truncate(true),
                                     );
                                 }
-                            });
+                            }
                         });
-                }
+                    });
             }
         }
 
@@ -370,40 +383,36 @@ impl eframe::App for App {
                         .striped(false)
                         .min_col_width(0.)
                         .show(ui, |ui| {
-                            self.chats.iter().enumerate().for_each(|(index, chat)| {
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .add(egui::SelectableLabel::new(
-                                            self.current_chat_index == Some(index),
-                                            chat.name.clone(),
-                                        ))
-                                        .clicked()
-                                    {
-                                        self.current_chat_index = Some(index);
+                            self.chats.lock().unwrap().get_chats().iter().for_each(
+                                |(&chat_id, chat)| {
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .add(egui::SelectableLabel::new(
+                                                self.current_chat_id == Some(chat_id),
+                                                chat.name.clone(),
+                                            ))
+                                            .clicked()
+                                        {
+                                            self.current_chat_id = Some(chat_id);
+                                        }
+                                    });
+                                    if ui.button("✏").clicked() {
+                                        self.edit_chat_mode = EditMode::Edit(chat_id);
+                                        self.chat_edit_window_content =
+                                            ChatEditWindowContent::from_chat(chat);
                                     }
-                                });
-                                if ui.button("✏").clicked() {
-                                    self.edit_chat_mode = EditMode::Edit(index);
-                                    self.chat_edit_window_content =
-                                        ChatEditWindowContent::from_chat(chat);
-                                }
-                                if ui.button("🗑").clicked() {
-                                    self.edit_chat_mode = EditMode::Delete(index);
-                                }
-                                ui.end_row();
-                            });
+                                    if ui.button("🗑").clicked() {
+                                        self.edit_chat_mode = EditMode::Delete(chat_id);
+                                    }
+                                    ui.end_row();
+                                },
+                            );
                         });
                     match self.edit_chat_mode {
-                        EditMode::Delete(idx) => match self.current_chat_index {
+                        EditMode::Delete(selected_chat_id) => match self.current_chat_id {
                             Some(selected_chat_index) => {
-                                let selected_chat_id =
-                                    *self.chats[selected_chat_index].get_chat_id();
-                                self.chats.remove(idx);
-
-                                self.current_chat_index = self
-                                    .chats
-                                    .iter()
-                                    .position(|chat| *chat.get_chat_id() == selected_chat_id);
+                                self.chats.lock().unwrap().remove_chat(&selected_chat_id);
+                                self.current_chat_id = None;
                                 self.edit_chat_mode = EditMode::None;
                             }
                             None => {}
@@ -493,7 +502,7 @@ impl eframe::App for App {
                                     });
                                     match self.edit_chat_mode {
                                         EditMode::New => {
-                                            if index != 0 && ui.button("🗑").clicked() {
+                                            if ui.button("🗑").clicked() {
                                                 chat_edit_mode_participant_edit_mode =
                                                     EditMode::Delete(index);
                                             }
@@ -522,21 +531,24 @@ impl eframe::App for App {
                             )
                             .clicked()
                         {
+                            let mut self_chats = self.chats.lock().unwrap();
                             match self.edit_chat_mode {
                                 EditMode::New => {
                                     let mut chat = Chat::new_chat(
                                         self.chat_edit_window_content.participants.clone(),
                                     );
                                     chat.name = self.chat_edit_window_content.name.clone();
-                                    self.chats.push(chat);
                                     self.edit_chat_mode = EditMode::None;
-                                    if self.current_chat_index.is_none() {
-                                        self.current_chat_index = Some(self.chats.len() - 1);
+                                    if self.current_chat_id.is_none() {
+                                        self.current_chat_id = Some(*chat.get_chat_id());
                                     }
+                                    self_chats.add_chat(chat);
                                 }
-                                EditMode::Edit(idx) => {
-                                    self.chats[idx].name =
-                                        self.chat_edit_window_content.name.clone();
+                                EditMode::Edit(chat_id) => {
+                                    if let Some(mut chat) = self_chats.remove_chat(&chat_id) {
+                                        chat.name = self.chat_edit_window_content.name.clone();
+                                        self_chats.add_chat(chat);
+                                    }
                                     self.edit_chat_mode = EditMode::None;
                                 }
                                 _ => {}
@@ -756,8 +768,8 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
 
-            match self.current_chat_index {
-                Some(current_chat_index) => match self.chats.get_mut(current_chat_index) {
+            match self.current_chat_id {
+                Some(current_chat_id) => match self.chats.lock().unwrap().get_chat(&current_chat_id) {
                     Some(current_chat) => {
                         ui.horizontal(|ui| {
                             ui.heading(RichText::new("Chat:"));
@@ -868,7 +880,7 @@ impl eframe::App for App {
                             });
                     }
                     None => {
-                        self.current_chat_index = None;
+                        self.current_chat_id = None;
                     }
                 },
                 None => {

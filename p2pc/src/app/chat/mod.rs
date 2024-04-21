@@ -8,6 +8,9 @@ pub use contact::*;
 mod contacts;
 pub use contacts::*;
 
+mod chats;
+pub use chats::*;
+
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct Chat {
     chat_id: Uuid,
@@ -26,18 +29,22 @@ impl Chat {
     ) {
         let ui_message = Message::new(sender_id, message.clone(), answer_to);
         if p2pc
-            .execute(p2pc_lib::Action::SendMessage(
-                p2pc_lib::ChatMessage {
-                    participants: self.participants.clone(),
-                    content: message,
-                    id: *ui_message.get_message_id(),
-                    chat_id: self.chat_id,
-                }
-            ))
+            .execute(p2pc_lib::Action::SendMessage(p2pc_lib::ChatMessage {
+                participants: self.participants.clone(),
+                content: message,
+                id: *ui_message.get_message_id(),
+                chat_id: self.chat_id,
+                answer_to,
+            }))
             .is_ok()
         {
             self.messages.push(ui_message);
         }
+    }
+
+    pub fn insert_message(&mut self, sender_id: String, message: String, answer_to: Option<Uuid>) {
+        self.messages
+            .push(Message::new(sender_id, message.clone(), answer_to));
     }
 
     pub fn new_chat(participants: Vec<String>) -> Self {
