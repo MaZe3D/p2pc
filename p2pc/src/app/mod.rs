@@ -1,6 +1,11 @@
-use egui::{vec2, Align, Button, Label, Layout, RichText};
+use std::ops::Mul;
+use std::str::FromStr;
 
+use egui::{vec2, Align, Button, Label, Layout, RichText, TextEdit};
+use egui::{Grid, ScrollArea};
 
+use libp2p::swarm::handler::multi;
+use libp2p::Multiaddr;
 use uuid::Uuid;
 
 mod chat;
@@ -40,11 +45,16 @@ pub struct App {
     drop_chat_messages_from_unkown: bool,
     theme: Theme,
 
+    settings: Settings,
+
     #[serde(skip)]
     show_chats: bool,
 
     #[serde(skip)]
     show_edit_chat: bool,
+
+    #[serde(skip)]
+    show_settings: bool,
 
     #[serde(skip)]
     edit_contact_mode: EditMode<String>,
@@ -87,6 +97,8 @@ impl Default for App {
             show_chats: false,
             show_edit_chat: false,
             show_contacts: false,
+            show_settings: false,
+            settings: Settings::default(),
             drop_chat_messages_from_unkown: false,
             chats: Vec::new(),
             contacts: Contacts::default(),
@@ -99,6 +111,28 @@ impl Default for App {
             theme: Theme::MACCHIATO,
             p2pc: None,
             keypair: keypair_wrapper::Keypair(libp2p::identity::Keypair::generate_ed25519()),
+        }
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct Settings {
+    peers: Vec<Multiaddr>,
+    listen_addresses: Vec<Multiaddr>,
+
+    #[serde(skip)]
+    current_peer: String,
+    #[serde(skip)]
+    current_peer_is_valid: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            peers: Vec::new(),
+            listen_addresses: Vec::new(),
+            current_peer: String::new(),
+            current_peer_is_valid: true,
         }
     }
 }
@@ -206,6 +240,9 @@ impl eframe::App for App {
                         ui.selectable_value(&mut self.theme, Theme::MACCHIATO, "Macchiato");
                         ui.selectable_value(&mut self.theme, Theme::MOCHA, "Mocha");
                     });
+                    if ui.selectable_label(self.show_settings, "⚙").clicked() {
+                        self.show_settings = !self.show_settings;
+                    };
                     self.update_theme(ctx);
                 });
             });
@@ -648,6 +685,57 @@ impl eframe::App for App {
                 },
             );
 
+        egui::SidePanel::right("settigs_panel").show_animated(ctx, self.show_settings, |ui| {
+            ui.heading("Settings");
+            ui.separator();
+            ScrollArea::vertical().show(ui, |ui| {
+                ui.collapsing("Peers", |ui| {
+                    Grid::new("peer_list_grid").num_columns(2).min_col_width(0.).show(ui, |ui| {
+                        let mut peer_list_entry_edit_mode: EditMode<usize> = EditMode::None;
+                        for (peer_index, peer) in self.settings.peers.iter().enumerate() {
+                            if ui.button("🗑").on_hover_text("Remove peer").clicked() {
+                                peer_list_entry_edit_mode = EditMode::Delete(peer_index);
+                            }
+                            ui.add(Label::new(peer.to_string()).truncate(true));
+                            ui.end_row();
+                        }
+                        if let EditMode::Delete(peer_index) = peer_list_entry_edit_mode {
+                            self.settings.peers.remove(peer_index);
+                        }
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        if ui
+                            .add_enabled(
+                                self.settings.current_peer_is_valid,
+                                Button::new("➕ Add Peer"),
+                            ).on_disabled_hover_text("Please enter a valid Multi Address.")
+                            .clicked()
+                        {
+                            match Multiaddr::from_str(&self.settings.current_peer) {
+                                Ok(peer) => {
+                                    self.settings.peers.push(peer);
+                                    self.settings.current_peer.clear();
+                                    self.settings.current_peer_is_valid = false;
+                                }
+                                Err(_) => {
+                                    log::warn!("Invalid peer address");
+                                }
+                            }
+                        }
+                        if ui
+                            .add(TextEdit::singleline(&mut self.settings.current_peer))
+                            .changed()
+                        {
+                            self.settings.current_peer_is_valid =
+                                match Multiaddr::from_str(&self.settings.current_peer) {
+                                    Ok(_) => true,
+                                    Err(_) => false,
+                                } && !self.settings.current_peer.is_empty();
+                        }
+                    });
+                })
+            });
+        });
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
 
