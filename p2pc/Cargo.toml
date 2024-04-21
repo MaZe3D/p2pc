@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.82"
-libp2p = { version = "0.53.2", features = ["tokio", "yamux", "quic", "noise", "tcp", "ping"] }
+clap = { version = "4.5.4", features = ["derive"] }
+env_logger = "0.11.3"
+libp2p = "0.53.2"
 log = "0.4.21"
+p2pc-lib = { version = "0.1.0", path = "../p2pc-lib" }
 tokio = { version = "1.37.0", features = ["full"] }
