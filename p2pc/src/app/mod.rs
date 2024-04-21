@@ -1,6 +1,9 @@
 use egui::{vec2, Align, Button, Label, Layout, RichText};
 use std::string;
+
 use uuid::Uuid;
+use base64::{engine::general_purpose, Engine as _};
+
 
 mod chat;
 use chat::Chat;
@@ -32,7 +35,6 @@ pub struct App {
     auto_scroll: bool,
     current_chat_index: Option<usize>,
 
-    own_public_key: string::String,
     keypair: keypair_wrapper::Keypair,
     chats: Vec<Chat>,
     contacts: Contacts,
@@ -83,9 +85,6 @@ impl Default for App {
         Self {
             // Example stuff:
             current_chat_index: Option::None,
-            own_public_key: "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAI8bPMUvxS90itiFYHak9ZnqzuhqCr0o
-7UNVByX+EbBrR+JXpIIiUTvEfRQvxWKrLjRnD/ObaTBaV4QrC6wJpp0CAwEAAQ=="
-                .to_owned(),
             auto_scroll: true,
             show_chats: false,
             show_edit_chat: false,
@@ -219,12 +218,12 @@ impl eframe::App for App {
                 ui.label("p2pc");
                 ui.separator();
                 if ui
-                    .add(egui::Label::new(&self.own_public_key).truncate(true))
+                    .add(egui::Label::new(bytes_to_base64(&self.keypair.0.public().encode_protobuf())).truncate(true))
                     .on_hover_text(format!("Click to copy Public Key"))
                     .clicked()
                 {
                     if !is_web {
-                        ctx.output_mut(|o| o.copied_text = self.own_public_key.clone());
+                        ctx.output_mut(|o| o.copied_text = bytes_to_base64(&self.keypair.0.to_protobuf_encoding().unwrap()));
                     }
                 };
             });
@@ -247,8 +246,7 @@ impl eframe::App for App {
                                     .clicked()
                                 {
                                     current_chat.new_message(
-                                        "0x1111".to_string(),
-                                        //self.own_public_key.clone(),
+                                        bytes_to_base64(&self.keypair.0.public().encode_protobuf()),
                                         self.current_message.trim().to_string(),
                                         self.current_message_answer_to,
                                     );
@@ -662,7 +660,7 @@ impl eframe::App for App {
                                         for message in current_chat.get_chat_messages() {
                                             let sender = self.contacts.get_contact(message.get_sender());
                                             let sender_is_user =
-                                                message.get_sender() == &self.own_public_key;
+                                                message.get_sender() == &bytes_to_base64(&self.keypair.0.public().encode_protobuf());
                                             let layout = if sender_is_user {
                                                 Layout::right_to_left(Align::Max)
                                             } else {
@@ -803,4 +801,8 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
+}
+
+fn bytes_to_base64(bytes: &[u8]) -> String {
+    general_purpose::STANDARD.encode(&bytes)
 }

@@ -5,12 +5,10 @@ impl serde::Serialize for Keypair {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(
-            &self
-                .0
-                .to_protobuf_encoding()
-                .map_err(|e| serde::ser::Error::custom(format!("{}", e)))?,
-        )
+        self.0
+            .to_protobuf_encoding()
+            .map_err(|e| serde::ser::Error::custom(format!("{}", e)))?
+            .serialize(serializer)
     }
 }
 
@@ -20,8 +18,16 @@ impl<'de> serde::Deserialize<'de> for Keypair {
         D: serde::Deserializer<'de>,
     {
         Ok(Keypair(
-            libp2p::identity::Keypair::from_protobuf_encoding(<&[u8]>::deserialize(deserializer)?)
-                .map_err(|e| serde::de::Error::custom(format!("{}", e)))?,
+            libp2p::identity::Keypair::from_protobuf_encoding(&<Vec<u8>>::deserialize(
+                deserializer,
+            )?)
+            .map_err(|e| serde::de::Error::custom(format!("{}", e)))?,
         ))
+    }
+}
+
+impl Default for Keypair {
+    fn default() -> Self {
+        Keypair(libp2p::identity::Keypair::generate_ed25519())
     }
 }
