@@ -2635,6 +2635,7 @@ dependencies = [
  "futures",
  "instant",
  "libp2p-core",
+ "libp2p-gossipsub",
  "libp2p-identity",
  "libp2p-ping",
  "libp2p-swarm",

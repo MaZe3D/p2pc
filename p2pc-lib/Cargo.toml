@@ -7,6 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.82"
-libp2p = { version = "0.53.2", features = ["tokio", "yamux", "quic", "noise", "tcp", "ping"] }
+libp2p = { version = "0.53.2", features = ["tokio", "yamux", "quic", "noise", "tcp", "ping", "gossipsub"] }
 log = "0.4.21"
 tokio = { version = "1.37.0", features = ["full"] }
