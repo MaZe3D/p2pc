@@ -1,9 +1,7 @@
 use egui::{vec2, Align, Button, Label, Layout, RichText};
 
-
-use uuid::Uuid;
 use base64::{engine::general_purpose, Engine as _};
-
+use uuid::Uuid;
 
 mod chat;
 use chat::Chat;
@@ -178,7 +176,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
-        let is_web = cfg!(target_arch = "wasm32");
+        let own_public_key_base_64 = self.keypair.get_public_key_base64();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -218,10 +216,11 @@ impl eframe::App for App {
                 ui.label("p2pc");
                 ui.separator();
                 if ui
-                    .add(egui::Label::new(bytes_to_base64(&self.keypair.0.public().encode_protobuf())).truncate(true))
+                    .add(egui::Label::new(own_public_key_base_64.clone()))
                     .on_hover_text("Click to copy Public Key".to_string())
-                    .clicked() && !is_web {
-                    ctx.output_mut(|o| o.copied_text = bytes_to_base64(&self.keypair.0.to_protobuf_encoding().unwrap()));
+                    .clicked()
+                {
+                    ctx.output_mut(|o| o.copied_text = own_public_key_base_64.clone());
                 };
             });
         });
@@ -234,6 +233,7 @@ impl eframe::App for App {
                     .show(ctx, |ui| {
                         ui.vertical(|ui| {
                             ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                                let mut message_send = false;
                                 if ui
                                     .add_enabled(
                                         !self.current_message.trim().is_empty(),
@@ -243,21 +243,36 @@ impl eframe::App for App {
                                     .clicked()
                                 {
                                     current_chat.new_message(
-                                        bytes_to_base64(&self.keypair.0.public().encode_protobuf()),
+                                        own_public_key_base_64.clone(),
                                         self.current_message.trim().to_string(),
                                         self.current_message_answer_to,
                                     );
+                                    message_send = true;
+                                }
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.current_message)
+                                        .desired_rows(1)
+                                        .hint_text(
+                                            RichText::new("Type a message...")
+                                                .color(egui::Color32::GRAY),
+                                        )
+                                        .min_size(ui.available_size()),
+                                );
+                                if response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    current_chat.new_message(
+                                        own_public_key_base_64.clone(),
+                                        self.current_message.trim().to_string(),
+                                        self.current_message_answer_to,
+                                    );
+                                    message_send = true;
+                                }
+                                if message_send {
                                     self.current_message.clear();
                                     self.current_message_answer_to = None;
+                                    response.request_focus();
                                 }
-                                egui::TextEdit::singleline(&mut self.current_message)
-                                    .desired_rows(1)
-                                    .hint_text(
-                                        RichText::new("Type a message...")
-                                            .color(egui::Color32::GRAY),
-                                    )
-                                    .min_size(ui.available_size())
-                                    .show(ui);
                             });
                         });
                     });
@@ -657,7 +672,7 @@ impl eframe::App for App {
                                         for message in current_chat.get_chat_messages() {
                                             let sender = self.contacts.get_contact(message.get_sender());
                                             let sender_is_user =
-                                                message.get_sender() == &bytes_to_base64(&self.keypair.0.public().encode_protobuf());
+                                                message.get_sender() == &own_public_key_base_64.clone();
                                             let layout = if sender_is_user {
                                                 Layout::right_to_left(Align::Max)
                                             } else {
@@ -795,8 +810,4 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
-}
-
-fn bytes_to_base64(bytes: &[u8]) -> String {
-    general_purpose::STANDARD.encode(bytes)
 }

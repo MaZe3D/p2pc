@@ -1,3 +1,5 @@
+use base64::Engine;
+
 pub struct Keypair(pub libp2p::identity::Keypair);
 
 impl serde::Serialize for Keypair {
@@ -29,5 +31,11 @@ impl<'de> serde::Deserialize<'de> for Keypair {
 impl Default for Keypair {
     fn default() -> Self {
         Keypair(libp2p::identity::Keypair::generate_ed25519())
+    }
+}
+
+impl Keypair {
+    pub fn get_public_key_base64(&self) -> String {
+        base64::engine::general_purpose::STANDARD.encode(self.0.public().encode_protobuf())
     }
 }
