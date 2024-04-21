@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'eframe_template'",
+            "name": "Debug executable 'p2pc'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=eframe_template",
-                    "--package=eframe_template"
+                    "--bin=p2pc",
+                    "--package=p2pc"
                 ],
                 "filter": {
-                    "name": "eframe_template",
+                    "name": "p2pc",
                     "kind": "bin"
                 }
             },

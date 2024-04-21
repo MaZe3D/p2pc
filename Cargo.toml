@@ -1,5 +1,5 @@
 [package]
-    name         = "ptpc"
+    name         = "p2pc"
     version      = "0.1.0"
     authors      = [ "Nicolai Bergmann", "Mark Orlando Zeller" ]
     edition      = "2021"
