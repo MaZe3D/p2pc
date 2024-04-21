@@ -204,7 +204,6 @@ impl App {
                             }
                         });
                     }
-                    egui_ctx.request_repaint();
                 }
             },
             p2pc_lib::Event::MessageReceived(p2pc_lib::ChatMessage {
@@ -226,6 +225,7 @@ impl App {
                         chats.add_chat(chat);
                     }
                 }
+                egui_ctx.request_repaint();
             }
         }
     }
