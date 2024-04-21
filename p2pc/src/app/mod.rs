@@ -7,6 +7,20 @@ use chat::Chat;
 use chat::Contacts;
 
 use self::chat::{ChatEditWindowContent, Contact, ContactEditWindowContent};
+use clap::Parser as _;
+
+/// Start or connect to an existing p2pc network
+#[derive(clap::Parser, Debug)]
+struct CliArguments {
+    /// Initial peers to connect to
+    #[arg(short, long, num_args(0..), value_name="MULTIADDRESS")]
+    peer_addresses: Vec<libp2p::Multiaddr>,
+
+    /// Interfaces to listen on
+    #[arg(short, long, num_args(0..), value_name="MULTIADDRESS", default_value = "/ip6/::/tcp/0")]
+    listen_addresses: Vec<libp2p::Multiaddr>,
+}
+
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -41,6 +55,9 @@ pub struct App {
     edit_chat_mode: EditMode<usize>,
     #[serde(skip)]
     show_contacts: bool,
+
+    #[serde(skip)]
+    p2pc: Option<p2pc_lib::P2pc>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq)]
@@ -81,18 +98,50 @@ impl Default for App {
             edit_chat_mode: EditMode::None,
             edit_contact_mode: EditMode::None,
             theme: Theme::MACCHIATO,
+            p2pc: None,
         }
     }
 }
 
+
 impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
+        let args = CliArguments::parse();
+        log::info!("{:?}", args);
+
+        let keypair = libp2p::identity::Keypair::generate_ed25519();
+        let mut p2pc = p2pc_lib::P2pc::new(keypair).unwrap();
+
+        for address in args.listen_addresses {
+            p2pc.execute(p2pc_lib::Action::ListenOn(address));
+        }
+        for address in args.peer_addresses {
+            p2pc.execute(p2pc_lib::Action::Dial(address));
+        }
+
+        //loop {
+        //    while let Ok(event) = p2pc.poll_event() {
+        //        match event {
+        //            p2pc_lib::Event::ActionResult(action_result) => match action_result {
+        //                p2pc_lib::ActionResult::ListenOn(address, None) => {
+        //                    log::info!("successfully listening on {}", address);
+        //                }
+        //                p2pc_lib::ActionResult::ListenOn(address, Some(err)) => {
+        //                    log::info!("failed to listen on {}: {}", address, err);
+        //                }
+        //                p2pc_lib::ActionResult::Dial(address, None) => {
+        //                    log::info!("successfully dialed {}", address);
+        //                }
+        //                p2pc_lib::ActionResult::Dial(address, Some(err)) => {
+        //                    log::info!("failed to dial {}: {}", address, err);
+        //                }
+        //            },
+        //        }
+        //    }
+        //    std::thread::sleep(std::time::Duration::from_millis(100));
+        //}
 
         cc.egui_ctx.set_zoom_factor(1.5);
 
@@ -102,7 +151,10 @@ impl App {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
 
-        Default::default()
+        Self {
+            p2pc: Some(p2pc),
+            ..Default::default()
+        }
     }
 
     fn update_theme(&mut self, ctx: &egui::Context) {
