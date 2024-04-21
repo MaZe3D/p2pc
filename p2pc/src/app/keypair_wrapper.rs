@@ -1,5 +1,3 @@
-use base64::Engine;
-
 pub struct Keypair(libp2p::identity::Keypair);
 
 impl serde::Serialize for Keypair {
@@ -39,7 +37,7 @@ impl Keypair {
         self.0.clone()
     }
 
-    pub fn get_peer_id_base64(&self) -> String {
-        base64::engine::general_purpose::STANDARD.encode(self.0.public().to_peer_id().to_bytes())
+    pub fn get_peer_id(&self) -> String {
+        self.0.public().to_peer_id().to_string()
     }
 }

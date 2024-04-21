@@ -1,6 +1,5 @@
 use std::hash::{Hash as _, Hasher as _};
 
-use base64::Engine as _;
 use libp2p::futures::StreamExt as _;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -88,8 +87,7 @@ async fn run_event_loop<F>(
 ) where
     F: FnMut(Event) + Send + 'static,
 {
-    let base64_id = base64::engine::general_purpose::STANDARD.encode(swarm.local_peer_id().to_bytes());
-    let this_node_topic = libp2p::gossipsub::IdentTopic::new(base64_id);
+    let this_node_topic = libp2p::gossipsub::IdentTopic::new(swarm.local_peer_id().to_string());
     log::info!("subscribing to this node's topic: {}", this_node_topic);
     swarm.behaviour_mut().subscribe(&this_node_topic).ok();
 

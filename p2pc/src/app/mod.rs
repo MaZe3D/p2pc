@@ -227,7 +227,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
-        let own_public_key_base_64 = self.keypair.get_peer_id_base64();
+        let own_public_key_base_64 = self.keypair.get_peer_id();
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -526,7 +526,7 @@ impl eframe::App for App {
                             match self.edit_chat_mode {
                                 EditMode::New => {
                                     let mut chat =
-                                        Chat::new_chat(vec![self.keypair.get_peer_id_base64()]);
+                                        Chat::new_chat(vec![self.keypair.get_peer_id()]);
                                     chat.name = self.chat_edit_window_content.name.clone();
                                     self.chats.push(chat);
                                     self.edit_chat_mode = EditMode::None;
