@@ -191,13 +191,12 @@ impl App {
                 } => {
                     if optional_errors.is_empty() {
                         log::info!("sending message failed");
-                    } else if optional_errors
-                        .iter()
-                        .any(|optional_error| optional_error.is_some())
-                    {
-                        log::info!("sending message to some or all participants failed");
                     } else {
-                        log::info!("successfully sent message");
+                        optional_errors.iter().for_each(|optional_error| {
+                            if let Some(error) = optional_error {
+                                log::error!("{}", error);
+                            }
+                        });
                     }
                 }
             },
@@ -525,8 +524,9 @@ impl eframe::App for App {
                         {
                             match self.edit_chat_mode {
                                 EditMode::New => {
-                                    let mut chat =
-                                        Chat::new_chat(vec![self.keypair.get_peer_id()]);
+                                    let mut chat = Chat::new_chat(
+                                        self.chat_edit_window_content.participants.clone(),
+                                    );
                                     chat.name = self.chat_edit_window_content.name.clone();
                                     self.chats.push(chat);
                                     self.edit_chat_mode = EditMode::None;

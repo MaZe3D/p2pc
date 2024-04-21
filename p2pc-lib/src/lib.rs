@@ -126,12 +126,14 @@ fn handle_action(
             ActionResult::ListenOn(address.clone(), swarm.listen_on(address).err())
         }
         Action::Dial(address) => ActionResult::Dial(address.clone(), swarm.dial(address).err()),
-        Action::SendMessage(chat_message) => {
+        Action::SendMessage(mut chat_message) => {
+            let destinations = chat_message.participants.clone();
+            chat_message.participants.push(swarm.local_peer_id().to_string());
             let optional_errors = match serde_json::to_string(&chat_message) {
-                Ok(serialized_message) => chat_message
-                    .participants
+                Ok(serialized_message) => destinations
                     .iter()
                     .map(|participant| {
+                        log::debug!("participant: {}", participant);
                         let topic = libp2p::gossipsub::IdentTopic::new(participant);
                         swarm
                             .behaviour_mut()
