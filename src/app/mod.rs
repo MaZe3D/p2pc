@@ -1,6 +1,5 @@
 use egui::{vec2, Align, Button, Label, Layout, RichText};
 use std::string;
-use std::vec;
 use uuid::Uuid;
 
 mod chat;
@@ -194,8 +193,8 @@ impl eframe::App for App {
                                     .clicked()
                                 {
                                     current_chat.new_message(
-                                        //"0x1234".to_string(),
-                                        self.own_public_key.clone(),
+                                        "0x1111".to_string(),
+                                        //self.own_public_key.clone(),
                                         self.current_message.trim().to_string(),
                                         self.current_message_answer_to,
                                     );
@@ -651,11 +650,14 @@ impl eframe::App for App {
                                                             if !sender_is_user {
                                                                 let sender_label_response = ui
                                                                     .add(Label::new(
-                                                                        RichText::new(format!(
-                                                                            "{}...",
-                                                                            &message.get_sender()
-                                                                                [..8]
-                                                                        ))
+                                                                        RichText::new(if message.get_sender().len() > 12 {
+                                                                            format!(
+                                                                                "{}...",
+                                                                                &message.get_sender()[..12]
+                                                                            )
+                                                                        } else {
+                                                                            message.get_sender().clone()
+                                                                        })
                                                                         .color(egui::Color32::RED),
                                                                     ))
                                                                     .on_hover_text(format!(
