@@ -82,7 +82,7 @@ async fn run_event_loop<F>(
 ) where
     F: FnMut(Event) + Send + 'static,
 {
-    let this_node_topic = libp2p::gossipsub::IdentTopic::new(swarm.local_peer_id().to_string());
+    let this_node_topic = libp2p::gossipsub::IdentTopic::new("chat");
     log::info!("subscribing to this node's topic: {}", this_node_topic);
     swarm.behaviour_mut().subscribe(&this_node_topic).ok();
 
@@ -114,13 +114,15 @@ fn handle_swarm_event<F>(
                 {
                     // remove own id
                     let local_id = &swarm.local_peer_id().to_string();
-                    chat_message.participants = chat_message
-                        .participants
-                        .into_iter()
-                        .filter(|participant| participant != local_id)
-                        .collect();
+                    if chat_message.participants.contains(local_id) {
+                        chat_message.participants = chat_message
+                            .participants
+                            .into_iter()
+                            .filter(|participant| participant != local_id)
+                            .collect();
 
-                    callback(Event::MessageReceived(chat_message));
+                        callback(Event::MessageReceived(chat_message));
+                    }
                 }
             }
         }
@@ -152,7 +154,7 @@ fn handle_action<F>(
                     .iter()
                     .map(|participant| {
                         log::debug!("participant: {}", participant);
-                        let topic = libp2p::gossipsub::IdentTopic::new(participant);
+                        let topic = libp2p::gossipsub::IdentTopic::new("chat");
                         swarm
                             .behaviour_mut()
                             .publish(topic, serialized_message.as_bytes())
