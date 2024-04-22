@@ -18,11 +18,6 @@ pub enum Action {
 }
 
 pub enum ActionResult {
-    ListenOn(
-        libp2p::Multiaddr,
-        Option<libp2p::TransportError<std::io::Error>>,
-    ),
-    Dial(libp2p::Multiaddr, Option<libp2p::swarm::DialError>),
     SendMessage {
         message_id: uuid::Uuid,
         chat_id: uuid::Uuid,
@@ -33,6 +28,7 @@ pub enum ActionResult {
 pub enum Event {
     ActionResult(ActionResult),
     MessageReceived(ChatMessage),
+    NewListenAddress(libp2p::Multiaddr),
 }
 
 pub struct P2pc {
@@ -93,10 +89,7 @@ async fn run_event_loop<F>(
     loop {
         tokio::select! {
             swarm_event = swarm.select_next_some() => handle_swarm_event(&mut swarm, &swarm_event, &mut callback),
-            Some(action) = receiver.recv() => {
-                let action_result = handle_action(&mut swarm, action);
-                callback(Event::ActionResult(action_result));
-            }
+            Some(action) = receiver.recv() => handle_action(&mut swarm, action, &mut callback),
         }
     }
 }
@@ -104,18 +97,16 @@ async fn run_event_loop<F>(
 fn handle_swarm_event<F>(
     swarm: &mut libp2p::Swarm<libp2p::gossipsub::Behaviour>,
     swarm_event: &libp2p::swarm::SwarmEvent<libp2p::gossipsub::Event>,
-    mut callback: &mut F,
+    callback: &mut F,
 ) where
     F: FnMut(Event) + Send + 'static,
 {
     match swarm_event {
         libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
-            log::info!("listening on {address:?}")
+            callback(Event::NewListenAddress(address.clone()));
         }
         libp2p::swarm::SwarmEvent::Behaviour(libp2p::gossipsub::Event::Message {
-            propagation_source,
-            message_id,
-            message,
+            message, ..
         }) => {
             if let Ok(serialized_chat_message) = String::from_utf8(message.data.clone()) {
                 if let Ok(mut chat_message) =
@@ -137,15 +128,20 @@ fn handle_swarm_event<F>(
     }
 }
 
-fn handle_action(
+fn handle_action<F>(
     swarm: &mut libp2p::Swarm<libp2p::gossipsub::Behaviour>,
     action: Action,
-) -> ActionResult {
+    callback: &mut F,
+) where
+    F: FnMut(Event) + Send + 'static,
+{
     match action {
         Action::ListenOn(address) => {
-            ActionResult::ListenOn(address.clone(), swarm.listen_on(address).err())
+            swarm.listen_on(address).ok();
         }
-        Action::Dial(address) => ActionResult::Dial(address.clone(), swarm.dial(address).err()),
+        Action::Dial(address) => {
+            swarm.dial(address).ok();
+        }
         Action::SendMessage(mut chat_message) => {
             let destinations = chat_message.participants.clone();
             chat_message
@@ -165,11 +161,11 @@ fn handle_action(
                     .collect(),
                 Err(_) => vec![],
             };
-            ActionResult::SendMessage {
+            callback(Event::ActionResult(ActionResult::SendMessage {
                 message_id: chat_message.id,
                 chat_id: chat_message.chat_id,
                 optional_errors,
-            }
+            }));
         }
     }
 }

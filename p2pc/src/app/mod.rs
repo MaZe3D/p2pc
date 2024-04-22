@@ -41,6 +41,9 @@ pub struct App {
     chats: std::sync::Arc<std::sync::Mutex<Chats>>,
     contacts: Contacts,
 
+    #[serde(skip)]
+    listen_addresses: std::sync::Arc<std::sync::Mutex<Vec<Multiaddr>>>,
+
     drop_chat_messages_from_unkown: bool,
     theme: Theme,
 
@@ -110,6 +113,7 @@ impl Default for App {
             theme: Theme::MACCHIATO,
             p2pc: None,
             keypair: Default::default(),
+            listen_addresses: std::sync::Arc::new(std::sync::Mutex::new(vec![])),
         }
     }
 }
@@ -149,9 +153,10 @@ impl App {
 
         let mut p2pc = {
             let egui_ctx = cc.egui_ctx.clone();
+            let listen_addresses = app.listen_addresses.clone();
             let chats = app.chats.clone();
             p2pc_lib::P2pc::new(app.keypair.get_keypair(), move |event| {
-                Self::handle_p2pc_event(event, &egui_ctx, chats.clone())
+                Self::handle_p2pc_event(event, &egui_ctx, listen_addresses.clone(), chats.clone())
             })
             .expect("could not initialize p2pc")
         };
@@ -178,23 +183,17 @@ impl App {
     fn handle_p2pc_event(
         event: p2pc_lib::Event,
         egui_ctx: &egui::Context,
-        mut chats: std::sync::Arc<std::sync::Mutex<Chats>>,
+        listen_addresses: std::sync::Arc<std::sync::Mutex<Vec<Multiaddr>>>,
+        chats: std::sync::Arc<std::sync::Mutex<Chats>>,
     ) {
         match event {
+            p2pc_lib::Event::NewListenAddress(address) => {
+                log::info!("listening on {}", address);
+                let mut listen_addresses = listen_addresses.lock().unwrap();
+                listen_addresses.push(address);
+                egui_ctx.request_repaint();
+            }
             p2pc_lib::Event::ActionResult(action_result) => match action_result {
-                p2pc_lib::ActionResult::ListenOn(address, None) => {
-                    log::info!("successfully listening on {}", address);
-                    egui_ctx.request_repaint();
-                }
-                p2pc_lib::ActionResult::ListenOn(address, Some(err)) => {
-                    log::info!("failed to listen on {}: {}", address, err);
-                }
-                p2pc_lib::ActionResult::Dial(address, None) => {
-                    log::info!("successfully dialed {}", address);
-                }
-                p2pc_lib::ActionResult::Dial(address, Some(err)) => {
-                    log::info!("failed to dial {}: {}", address, err);
-                }
                 p2pc_lib::ActionResult::SendMessage {
                     message_id: _,
                     chat_id: _,
@@ -420,14 +419,15 @@ impl eframe::App for App {
                             );
                         });
                     match self.edit_chat_mode {
-                        EditMode::Delete(selected_chat_id) => match self.current_chat_id {
-                            Some(selected_chat_index) => {
-                                self.chats.lock().unwrap().remove_chat(&selected_chat_id);
-                                self.current_chat_id = None;
-                                self.edit_chat_mode = EditMode::None;
+                        EditMode::Delete(selected_chat_id) => {
+                            if let Some(current_chat_id) = self.current_chat_id {
+                                if selected_chat_id == current_chat_id {
+                                    self.current_chat_id = None;
+                                }
                             }
-                            None => {}
-                        },
+                            self.chats.lock().unwrap().remove_chat(&selected_chat_id);
+                            self.edit_chat_mode = EditMode::None;
+                        }
                         _ => {}
                     }
                 });
@@ -776,7 +776,14 @@ impl eframe::App for App {
                                 } && !self.settings.current_peer.is_empty();
                         }
                     });
-                })
+                });
+
+                ui.collapsing("Listen Addresses", |ui| {
+                    for listen_address in self.listen_addresses.lock().unwrap().iter() {
+                        ui.label(listen_address.to_string());
+                        ui.separator();
+                    }
+                });
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
