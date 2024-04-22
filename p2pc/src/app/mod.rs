@@ -24,7 +24,7 @@ struct CliArguments {
     peer_addresses: Vec<libp2p::Multiaddr>,
 
     /// Interfaces to listen on
-    #[arg(short, long, num_args(0..), value_name="MULTIADDRESS", default_value = "/ip6/::/tcp/0")]
+    #[arg(short, long, num_args(0..), value_name="MULTIADDRESS", default_values = vec!["/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"])]
     listen_addresses: Vec<libp2p::Multiaddr>,
 }
 
@@ -131,7 +131,7 @@ impl Default for Settings {
             peers: Vec::new(),
             listen_addresses: Vec::new(),
             current_peer: String::new(),
-            current_peer_is_valid: true,
+            current_peer_is_valid: false,
         }
     }
 }
@@ -162,8 +162,13 @@ impl App {
         for address in args.peer_addresses {
             p2pc.execute(p2pc_lib::Action::Dial(address)).ok();
         }
+
         for address in args.listen_addresses {
             p2pc.execute(p2pc_lib::Action::ListenOn(address)).ok();
+        }
+
+        for address in &app.settings.peers {
+            p2pc.execute(p2pc_lib::Action::Dial(address.clone())).ok();
         }
 
         app.p2pc = Some(p2pc);
@@ -748,9 +753,12 @@ impl eframe::App for App {
                         {
                             match Multiaddr::from_str(&self.settings.current_peer) {
                                 Ok(peer) => {
-                                    self.settings.peers.push(peer);
+                                    self.settings.peers.push(peer.clone());
                                     self.settings.current_peer.clear();
                                     self.settings.current_peer_is_valid = false;
+                                    if let Some(p2pc) = &mut self.p2pc {
+                                        p2pc.execute(p2pc_lib::Action::Dial(peer)).ok();
+                                    }
                                 }
                                 Err(_) => {
                                     log::warn!("Invalid peer address");
