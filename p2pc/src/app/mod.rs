@@ -787,8 +787,6 @@ impl eframe::App for App {
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-
             match self.current_chat_id {
                 Some(current_chat_id) => match self.chats.lock().unwrap().get_chat(&current_chat_id) {
                     Some(current_chat) => {

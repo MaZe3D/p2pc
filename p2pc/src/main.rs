@@ -30,8 +30,15 @@ fn main() {
         ..Default::default()
     };
 
+    let mut app_name = "p2pc".to_string();
+
+    if let Ok(instance_string) = std::env::var("INSTANCE") {
+        app_name += "-";
+        app_name += &instance_string;
+    }
+
     eframe::run_native(
-        "p2pc",
+        &app_name,
         native_options,
         Box::new(|cc| Box::new(p2pc::App::new(cc))),
     ).unwrap();
